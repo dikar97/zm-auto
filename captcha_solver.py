@@ -1,14 +1,8 @@
-"""Captcha solver via 2captcha API — no browser needed.
-
-Solves both Cloudflare Turnstile and Google reCAPTCHA v2 by submitting
-to 2captcha and polling for the token. The returned tokens are then
-used directly in HTTP API calls (curl_cffi), bypassing the need for a
-real browser entirely.
-
-Env vars (or pass directly):
-    CAPTCHA_API_KEY   — 2captcha API key
-    CAPTCHA_PROVIDER  — "2captcha" (default) or "anticaptcha"
+"""⚠️ DISCLAIMER: This project is for educational and research purposes only.
+Users are solely responsible for complying with all applicable ToS and laws.
+本项目仅供学习研究，使用者需自行承担所有后果。
 """
+
 from __future__ import annotations
 
 import os

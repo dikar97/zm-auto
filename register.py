@@ -1,20 +1,8 @@
-"""Account registrar — pure HTTP + 2captcha, no browser needed.
-
-Flow:
-  1. Create temp mailbox (7 providers)
-  2. GET /login → obtain ctoken cookie (auto via curl_cffi)
-  3. 2captcha solve Turnstile → turnstile_token
-  4. POST /api/login/email/code/send {email, token} → sends code
-  5. Mailbox: wait_for_code → 6-digit code
-  6. POST /api/login/email/code/verify {email, code} → sets sessionId
-  7. GET /api/user/info → check needVerify
-  8. 2captcha solve reCAPTCHA v2 → recaptcha_token
-  9. POST /api/login/recaptcha/verification {token} → unlocks whitelist
- 10. POST /api/api_key/create {name, tags} → returns sk-ai-... key
-
-All HTTP calls use curl_cffi (impersonate=chrome) to bypass TLS
-fingerprinting. ctoken is captured automatically from Set-Cookie.
+"""⚠️ DISCLAIMER: This project is for educational and research purposes only.
+Users are solely responsible for complying with all applicable ToS and laws.
+本项目仅供学习研究，使用者需自行承担所有后果。
 """
+
 from __future__ import annotations
 
 import json

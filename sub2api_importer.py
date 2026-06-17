@@ -1,20 +1,8 @@
-"""Sub2API account importer — adds API keys to a target group.
-
-Logs into Sub2API admin, finds (or creates) the target group, then
-creates an anthropic apikey account with the given API key, base_url,
-model_mapping, and concurrency.
-
-Config (config.json → "sub2api"):
-    {
-        "base_url": "http://your-sub2api-host:8082",
-        "email": "admin@example.com",
-        "password": "your-password",
-        "group_name": "auto",
-        "concurrency": 3,
-        "models": ["z-ai/glm-5.2-free", "moonshotai/kimi-k2.7-code-free"],
-        "upstream_base_url": "https://example.com/api/anthropic"
-    }
+"""⚠️ DISCLAIMER: This project is for educational and research purposes only.
+Users are solely responsible for complying with all applicable ToS and laws.
+本项目仅供学习研究，使用者需自行承担所有后果。
 """
+
 from __future__ import annotations
 
 import requests

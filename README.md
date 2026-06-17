@@ -1,5 +1,19 @@
 # 自动注册机
 
+> ⚠️ **免责声明 / Disclaimer**
+>
+> 本项目仅供学习和研究用途，旨在帮助开发者理解 HTTP 协议分析、API 逆向工程、以及反爬虫机制的工作原理。
+>
+> - 本项目不针对任何特定网站或服务，所有目标地址均为用户自行配置
+> - 使用本项目产生的任何账号、API Key 或其他后果由使用者自行承担
+> - 使用者需自行确保遵守目标网站的服务条款（ToS）及当地法律法规
+> - 作者不对任何因使用或滥用本项目而导致的后果负责
+> - 如目标站点方认为本项目侵犯其权益，请联系移除
+>
+> This project is for educational and research purposes only. It is designed to help developers understand HTTP protocol analysis, API reverse engineering, and anti-bot mechanisms. Users are solely responsible for their own actions and must comply with all applicable terms of service and laws.
+
+---
+
 全自动账号注册 + API Key 获取。**纯 HTTP + 2captcha，不需要浏览器。**
 
 ## 架构

@@ -1,20 +1,8 @@
-"""Temporary mailbox providers, ported from chatgpt2api register suite.
-
-Supports 7 providers via a uniform `create_mailbox()` / `wait_for_code()` API:
-  - cloudflare_temp_email (CloudflareTempMail, admin_password + domains)
-  - tempmail_lol          (TempMail.lol API v2, optional api_key + wildcard)
-  - duckmail              (DuckMail, api_key + default_domain)
-  - gptmail               (GPTMail @ mail.chatgpt.org.uk, X-API-Key)
-  - moemail               (MoEmail self-host, api_base + api_key + domains)
-  - inbucket              (Inbucket self-host, api_base + domains)
-  - yyds_mail             (YYDSMail, api_base + api_key + domains)
-
-Each provider returns a `mailbox` dict with at least:
-    {provider, provider_ref, address, ...provider-specific-fields}
-
-`wait_for_code(mailbox)` polls the mailbox until a 6-digit verification code
-shows up (or timeout).
+"""⚠️ DISCLAIMER: This project is for educational and research purposes only.
+Users are solely responsible for complying with all applicable ToS and laws.
+本项目仅供学习研究，使用者需自行承担所有后果。
 """
+
 from __future__ import annotations
 
 import hashlib
