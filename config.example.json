@@ -1,0 +1,68 @@
+{
+  "mail": {
+    "request_timeout": 30,
+    "wait_timeout": 120,
+    "wait_interval": 2,
+    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "providers": [
+      {
+        "type": "cloudflare_temp_email",
+        "enable": true,
+        "api_base": "https://your-cf-mail-worker.example.com",
+        "admin_password": "your-admin-password",
+        "domain": ["example.com", "mail.example.com"]
+      },
+      {
+        "type": "gptmail",
+        "enable": false,
+        "api_key": "your-gptmail-api-key",
+        "default_domain": ""
+      },
+      {
+        "type": "tempmail_lol",
+        "enable": false,
+        "api_key": "",
+        "domain": ["*.tempmail.lol"]
+      },
+      {
+        "type": "duckmail",
+        "enable": false,
+        "api_key": "your-duckmail-api-key",
+        "default_domain": "duckmail.sbs"
+      },
+      {
+        "type": "moemail",
+        "enable": false,
+        "api_base": "https://your-moemail.example.com",
+        "api_key": "your-moemail-api-key",
+        "domain": ["example.com"],
+        "expiry_time": 0
+      },
+      {
+        "type": "inbucket",
+        "enable": false,
+        "api_base": "https://your-inbucket.example.com",
+        "domain": ["example.com"],
+        "random_subdomain": true
+      },
+      {
+        "type": "yyds_mail",
+        "enable": false,
+        "api_base": "https://maliapi.215.im/v1",
+        "api_key": "your-yyds-api-key",
+        "domain": ["example.com"],
+        "subdomain": "",
+        "wildcard": false
+      }
+    ]
+  },
+  "proxy": "",
+  "total": 1,
+  "threads": 1,
+  "headless": false,
+  "captcha": {
+    "provider": "",
+    "api_key": ""
+  },
+  "api_key_name": "auto"
+}
