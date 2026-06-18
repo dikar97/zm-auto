@@ -64,5 +64,18 @@
     "provider": "",
     "api_key": ""
   },
-  "api_key_name": "auto"
+  "api_key_name": "auto",
+  "target_base": "https://your-target-site.com",
+  "target_api_version": "2026-04-20",
+  "sub2api": {
+    "enabled": false,
+    "base_url": "http://your-sub2api-host:8082",
+    "email": "",
+    "password": "",
+    "group_name": "auto",
+    "concurrency": 3,
+    "models": ["z-ai/glm-5.2-free", "moonshotai/kimi-k2.7-code-free"],
+    "upstream_base_url": "https://your-target-site.com/api/anthropic",
+    "proxy_ids": []
+  }
 }

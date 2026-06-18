@@ -17,3 +17,6 @@ accounts.json
 # IDE
 .vscode/
 .idea/
+
+# Logs
+*.log

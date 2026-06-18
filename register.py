@@ -20,6 +20,7 @@ from curl_cffi import requests as curl_requests
 from mail_provider import create_mailbox, wait_for_code
 from captcha_solver import CaptchaSolver
 from sub2api_importer import Sub2APIImporter
+import itertools
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -40,6 +41,49 @@ print_lock = threading.Lock()
 stats_lock = threading.Lock()
 stats = {"done": 0, "success": 0, "fail": 0, "start_time": 0.0}
 
+# Shared proxy rotation across all workers
+# Each entry: {"name": "日本", "proxy_url": "socks5://...", "sub2api_proxy_id": 3}
+_register_proxy_cycle: itertools.cycle | None = None
+_register_proxy_lock = threading.Lock()
+
+# Sub2API zm-* naming counter
+_zm_counter: int = 0
+_zm_counter_lock = threading.Lock()
+
+
+def _next_register_proxy() -> dict | None:
+    """Thread-safe round-robin pick. Returns {name, proxy_url, sub2api_proxy_id} or None."""
+    global _register_proxy_cycle
+    with _register_proxy_lock:
+        if _register_proxy_cycle is None:
+            return None
+        entry = next(_register_proxy_cycle)
+        return dict(entry)
+
+
+def _init_zm_counter(start: int) -> None:
+    """Initialize the zm-* naming counter."""
+    global _zm_counter
+    _zm_counter = start
+
+
+def _next_zm_name() -> str:
+    """Thread-safe next zm-* name."""
+    global _zm_counter
+    with _zm_counter_lock:
+        _zm_counter += 1
+        return f"zm-{_zm_counter}"
+
+
+def _init_proxy_rotation(cfg: dict) -> None:
+    """Initialize the shared register-proxy rotation from config."""
+    global _register_proxy_cycle
+    proxies = list(cfg.get("register_proxies", []))
+    if proxies:
+        _register_proxy_cycle = itertools.cycle(proxies)
+    else:
+        _register_proxy_cycle = None
+
 
 # --------------------------------------------------------------------------- #
 # Config
@@ -53,6 +97,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "providers": [],
     },
     "proxy": "",
+    "register_proxies": [
+        {"name": "JP", "proxy_url": "socks5://PROXY_HOST:PORT_1", "sub2api_proxy_id": 3},
+        {"name": "KR", "proxy_url": "http://PROXY_HOST:PORT_2", "sub2api_proxy_id": 1},
+        {"name": "SG", "proxy_url": "socks5://PROXY_HOST:PORT_3", "sub2api_proxy_id": 4}
+    ],
     "total": 1,
     "threads": 1,
     "captcha": {
@@ -60,6 +109,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "api_key": "",
     },
     "api_key_name": "auto",
+    "target_base": "https://example.com",
+    "target_api_version": "2026-04-20",
     "sub2api": {
         "enabled": False,
         "base_url": "",
@@ -68,7 +119,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "group_name": "auto",
         "concurrency": 3,
         "models": ["z-ai/glm-5.2-free", "moonshotai/kimi-k2.7-code-free"],
-        "upstream_base_url": "https://example.com/api/anthropic",
+        "upstream_base_url": "",
+        "proxy_ids": [],
     },
 }
 
@@ -77,9 +129,16 @@ def load_config() -> dict:
     config = json.loads(json.dumps(DEFAULT_CONFIG))
     if CONFIG_FILE.exists():
         saved = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        for key in ("mail", "proxy", "total", "threads", "captcha", "api_key_name", "sub2api"):
+        for key in ("mail", "proxy", "register_proxies", "total", "threads", "captcha", "api_key_name", "sub2api", "target_base", "target_api_version"):
             if key in saved:
                 config[key] = saved[key]
+    # Override module-level constants from config
+    global TARGET_BASE, API_BASE, X_API_VERSION
+    if config.get("target_base"):
+        TARGET_BASE = str(config["target_base"]).rstrip("/")
+        API_BASE = f"{TARGET_BASE}/api"
+    if config.get("target_api_version"):
+        X_API_VERSION = str(config["target_api_version"])
     return config
 
 
@@ -188,6 +247,42 @@ class Registrar:
         except Exception:
             return {}
 
+    def _test_api_key(self, api_key: str, index: int) -> bool:
+        """Test the key on ZenMux anthropic endpoint with z-ai/glm-5.2-free."""
+        try:
+            proxies = {}
+            proxy_url = getattr(self, "proxy", "")
+            if proxy_url:
+                proxies = {"http": proxy_url, "https": proxy_url}
+            for attempt in range(2):
+                resp = curl_requests.post(
+                    f"{TARGET_BASE}/api/anthropic/v1/messages",
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "z-ai/glm-5.2-free",
+                        "max_tokens": 5,
+                        "messages": [{"role": "user", "content": "hi"}],
+                    },
+                    proxies=proxies,
+                    timeout=20,
+                    impersonate="chrome131",
+                )
+                step(index, f"测试状态码: {resp.status_code} (attempt {attempt+1})", "cyan")
+                if resp.status_code == 200:
+                    return True
+                if resp.status_code == 403 and attempt == 0:
+                    time.sleep(3)
+                    continue
+                return False
+            return False
+        except Exception as e:
+            step(index, f"测试异常: {e}", "yellow")
+            return False
+
     # ------------------------------------------------------------------ #
     # Registration flow
     # ------------------------------------------------------------------ #
@@ -252,29 +347,30 @@ class Registrar:
         user_id = str(user_data.get("userId") or user_data.get("accountId") or "")
         step(index, f"userId={user_id}, needVerify={need_verify}", "green")
 
-        # 8. reCAPTCHA (if needed)
-        if need_verify:
-            step(index, "2captcha 解 reCAPTCHA v2", "cyan")
-            recaptcha_token = self.captcha.solve_recaptcha(f"{TARGET_BASE}/verify?method=unknown")
-            step(index, f"reCAPTCHA 通过 (len={len(recaptcha_token)})", "green")
+        # 8. reCAPTCHA — always solve, even if needVerify=False
+        # (ZenMux may report needVerify=False but still block api_key/create
+        #  with 423 "not whitelisted" until reCAPTCHA is completed)
+        step(index, "2captcha 解 reCAPTCHA v2", "cyan")
+        recaptcha_token = self.captcha.solve_recaptcha(f"{TARGET_BASE}/verify?method=unknown")
+        step(index, f"reCAPTCHA 通过 (len={len(recaptcha_token)})", "green")
 
-            # 9. Submit recaptcha verification
-            step(index, "提交 reCAPTCHA 验证", "cyan")
-            rc_resp = self._post(
-                "/login/recaptcha/verification",
-                payload={"token": recaptcha_token},
-                referer=f"{TARGET_BASE}/verify?method=unknown",
-            )
-            if not rc_resp.get("success"):
-                raise RuntimeError(f"reCAPTCHA 验证失败: {rc_resp}")
-            step(index, "reCAPTCHA 验证成功", "green")
+        # 9. Submit recaptcha verification
+        step(index, "提交 reCAPTCHA 验证", "cyan")
+        rc_resp = self._post(
+            "/login/recaptcha/verification",
+            payload={"token": recaptcha_token},
+            referer=f"{TARGET_BASE}/verify?method=unknown",
+        )
+        if not rc_resp.get("success"):
+            raise RuntimeError(f"reCAPTCHA 验证失败: {rc_resp}")
+        step(index, "reCAPTCHA 验证成功", "green")
 
-            # Re-check user info
-            user_info = self._get("/user/info", referer=f"{TARGET_BASE}/")
-            user_data = user_info.get("data") or {}
-            if user_data.get("needVerify"):
-                raise RuntimeError("reCAPTCHA 后 needVerify 仍为 true")
-            step(index, "白名单已解锁", "green")
+        # Re-check user info
+        user_info = self._get("/user/info", referer=f"{TARGET_BASE}/")
+        user_data = user_info.get("data") or {}
+        if user_data.get("needVerify"):
+            raise RuntimeError("reCAPTCHA 后 needVerify 仍为 true")
+        step(index, "白名单已解锁", "green")
 
         # 10. Create API key
         key_name = str(config.get("api_key_name") or "auto")
@@ -307,16 +403,27 @@ class Registrar:
             raise RuntimeError(f"创建 API Key 失败: {create_resp}")
         step(index, f"API Key: {api_key[:12]}...{api_key[-4:]}", "green")
 
-        # 11. Import to Sub2API
+        # 11. Test key before importing to Sub2API
+        step(index, "测试 API Key (z-ai/glm-5.2-free)", "cyan")
+        test_passed = self._test_api_key(api_key, index)
+        if not test_passed:
+            raise RuntimeError("API Key 测试失败: 无法调用 z-ai/glm-5.2-free")
+        step(index, "API Key 测试通过", "green")
+
+        # 12. Import to Sub2API
+        sub2api_id = None
         sub2api_cfg = config.get("sub2api", {})
         if sub2api_cfg.get("enabled", False):
             step(index, "导入 Sub2API", "cyan")
             try:
                 importer = Sub2APIImporter(sub2api_cfg)
-                account_name = f"auto-{email.split('@')[0][:20]}"
-                account_data = importer.import_key(api_key, name=account_name)
+                # Use the proxy ID that matches the registration IP
+                proxy_id = getattr(self, "_sub2api_proxy_id", None)
+                account_name = _next_zm_name()
+                account_data = importer.import_key(api_key, name=account_name, proxy_id=proxy_id, concurrency=10, priority=1)
                 sub2api_id = account_data.get("id", "?")
-                step(index, f"Sub2API 导入成功 (account id={sub2api_id})", "green")
+                proxy_info = f", proxy_id={proxy_id}" if proxy_id else ""
+                step(index, f"Sub2API 导入成功 (id={sub2api_id}, name={account_name}{proxy_info})", "green")
             except Exception as e:
                 step(index, f"Sub2API 导入失败: {e}", "yellow")
 
@@ -325,6 +432,7 @@ class Registrar:
             "user_id": user_id,
             "api_key": api_key,
             "key_name": key_name,
+            "sub2api_id": sub2api_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -334,12 +442,21 @@ class Registrar:
 # --------------------------------------------------------------------------- #
 def worker(index: int) -> dict:
     start = time.time()
+    # Pick a register proxy (JP → KR → SG → ...) — links registration IP to sub2api proxy
+    proxy_entry = _next_register_proxy()
+    proxy_url = (proxy_entry or {}).get("proxy_url", "")
+    proxy_name = (proxy_entry or {}).get("name", "")
+    sub2api_proxy_id = (proxy_entry or {}).get("sub2api_proxy_id")
+
     registrar = Registrar(
-        proxy=config.get("proxy", ""),
+        proxy=proxy_url or config.get("proxy", ""),
         captcha_cfg=config.get("captcha", {}),
     )
+    # Pass proxy info to the registrar so it can log + forward to sub2api
+    registrar._proxy_name = proxy_name
+    registrar._sub2api_proxy_id = sub2api_proxy_id
     try:
-        step(index, "任务启动", "cyan")
+        step(index, f"任务启动" + (f"，代理: {registrar._proxy_name}" if registrar._proxy_name else ""), "cyan")
         result = registrar.register(index)
         cost = time.time() - start
         with stats_lock:
@@ -363,13 +480,47 @@ def worker(index: int) -> dict:
         registrar.close()
 
 
+def _query_max_zm_number(cfg: dict) -> int:
+    """Query Sub2API for existing zm-* accounts and return the max number."""
+    sub2api_cfg = cfg.get("sub2api", {})
+    if not sub2api_cfg.get("enabled", False):
+        return 0
+    try:
+        importer = Sub2APIImporter(sub2api_cfg)
+        importer.login()
+        max_num = 0
+        for page in range(1, 50):
+            r = importer._session.get(
+                f"{importer.base_url}/api/v1/admin/accounts?page={page}&page_size=100",
+                headers=importer.headers,
+                timeout=15,
+            )
+            data = r.json()
+            items = data.get("data", {}).get("items", [])
+            if not items:
+                break
+            for a in items:
+                name = a.get("name", "")
+                if name.startswith("zm-") and name[3:].isdigit():
+                    max_num = max(max_num, int(name[3:]))
+            if len(items) < 100:
+                break
+        return max_num
+    except Exception as e:
+        log(f"查询 zm-* 计数失败: {e}", "yellow")
+        return 0
+
+
 def run(total: int | None = None, threads: int | None = None) -> list[dict]:
     total = total if total is not None else config.get("total", 1)
     threads = threads if threads is not None else config.get("threads", 1)
     threads = max(1, min(threads, total))
 
     stats["start_time"] = time.time()
-    log(f"开始注册 {total} 个账号，并发 {threads}", "cyan")
+    _init_proxy_rotation(config)
+    _init_zm_counter(_query_max_zm_number(config))
+    proxy_count = len(config.get("register_proxies", []))
+    log(f"开始注册 {total} 个账号，并发 {threads}" + (f"，IP 轮询 {proxy_count} 个节点" if proxy_count else ""), "cyan")
 
     results: list[dict] = []
     if threads == 1:

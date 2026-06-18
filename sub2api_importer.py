@@ -23,6 +23,9 @@ class Sub2APIImporter:
         self.concurrency = int(cfg.get("concurrency", 3))
         self.models = list(cfg.get("models", []))
         self.upstream_base_url = str(cfg.get("upstream_base_url", ""))
+        # Proxy rotation: pick one proxy per import, round-robin
+        self.proxy_ids = list(cfg.get("proxy_ids", []))
+        self._proxy_index = 0
         self._token: str = ""
         self._group_id: int = 0
         self._session = requests.Session()
@@ -82,9 +85,27 @@ class Sub2APIImporter:
         return self._group_id
 
     # ------------------------------------------------------------------ #
+    # Proxy rotation
+    # ------------------------------------------------------------------ #
+    def _next_proxy_id(self) -> int | None:
+        """Round-robin pick a proxy ID. Returns None if no proxies configured."""
+        if not self.proxy_ids:
+            return None
+        proxy_id = self.proxy_ids[self._proxy_index % len(self.proxy_ids)]
+        self._proxy_index = (self._proxy_index + 1) % len(self.proxy_ids)
+        return int(proxy_id)
+
+    # ------------------------------------------------------------------ #
     # Account
     # ------------------------------------------------------------------ #
-    def import_account(self, api_key: str, name: str = "") -> dict[str, Any]:
+    def import_account(
+        self,
+        api_key: str,
+        name: str = "",
+        proxy_id: int | None = None,
+        concurrency: int | None = None,
+        priority: int | None = None,
+    ) -> dict[str, Any]:
         """Create an anthropic apikey account in the target group.
 
         Returns the created account data.
@@ -104,9 +125,16 @@ class Sub2APIImporter:
                 "base_url": self.upstream_base_url,
                 "model_mapping": model_mapping,
             },
-            "concurrency": self.concurrency,
+            "concurrency": concurrency if concurrency is not None else self.concurrency,
+            "priority": priority if priority is not None else 0,
             "group_ids": [self._group_id],
         }
+
+        # Proxy: use caller-provided ID, or fall back to internal rotation
+        if proxy_id is None:
+            proxy_id = self._next_proxy_id()
+        if proxy_id:
+            payload["proxy_id"] = proxy_id
 
         r = self._session.post(
             f"{self.base_url}/api/v1/admin/accounts",
@@ -122,10 +150,17 @@ class Sub2APIImporter:
     # ------------------------------------------------------------------ #
     # Full flow
     # ------------------------------------------------------------------ #
-    def import_key(self, api_key: str, name: str = "") -> dict[str, Any]:
+    def import_key(
+        self,
+        api_key: str,
+        name: str = "",
+        proxy_id: int | None = None,
+        concurrency: int | None = None,
+        priority: int | None = None,
+    ) -> dict[str, Any]:
         """Login → ensure group → create account. Returns account data."""
         if not self._token:
             self.login()
         if not self._group_id:
             self.ensure_group()
-        return self.import_account(api_key, name)
+        return self.import_account(api_key, name, proxy_id=proxy_id, concurrency=concurrency, priority=priority)
