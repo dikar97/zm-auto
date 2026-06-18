@@ -125,6 +125,23 @@ curl https://your-target-site/api/v1/chat/completions \
 - 邮箱: 免费（CF temp mail）
 - 单账号注册耗时: **~30s**
 
+## 更新日志
+
+### 2026-06-18
+
+- **feat**: 注册后新增"预热"步骤——调用目标模型接口验证 API Key 可用性，只有返回 200 才导入 Sub2API
+- **feat**: Sub2API 导入时自动命名为 `zm-N`，支持并发和优先级参数
+- **feat**: 启动时自动查询 Sub2API 已有 `zm-*` 账号，避免命名冲突
+- **chore**: 清理代码中的真实代理地址、目标域名、作者名等敏感信息，统一改为占位符
+- **chore**: `.gitignore` 增加 `*.log`
+
+### 2026-06-17
+
+- **feat**: 初始版本，纯 HTTP + 2captcha 注册流程
+- **feat**: 支持 7 个临时邮箱 provider
+- **feat**: 支持自动导入 Sub2API
+- **docs**: 添加免责声明
+
 ## 注意事项
 
 1. **ctoken** 从 `/login` 的 Set-Cookie 自动获取
@@ -132,3 +149,4 @@ curl https://your-target-site/api/v1/chat/completions \
 3. **API Key 脱敏**: create 返回 `token: "***"`，list 返回 `sk-ai-...末4位`。注册机从 list 取 key
 4. **白名单**: 新用户必须过 reCAPTCHA 才能用 API
 5. **Free Plan**: 5 Flows / 5h
+6. **预热**: 导入网关前会实际调用目标模型验证 key，测试失败不计入成功
