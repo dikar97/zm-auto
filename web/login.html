@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zm-auto · 登录</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0a0e14; color:#e5e7eb; }
+  .panel { background:#11161f; border:1px solid #1f2937; }
+  .accent { color:#60a5fa; }
+  .btn-primary { background:#2563eb; }
+  .btn-primary:hover { background:#1d4ed8; }
+  .input { background:#0a0e14; border:1px solid #1f2937; color:#e5e7eb; }
+  .input:focus { border-color:#2563eb; outline:none; box-shadow:0 0 0 2px rgba(37,99,235,0.3); }
+</style>
+</head>
+<body class="min-h-screen flex items-center justify-center px-4">
+  <main class="panel rounded-lg shadow-xl w-full max-w-sm p-8">
+    <header class="mb-6 text-center">
+      <h1 class="text-2xl font-semibold tracking-tight">zm-auto</h1>
+      <p class="text-sm text-gray-400 mt-1">Web 管理面板 · 请登录</p>
+    </header>
+
+    <form method="POST" action="/login" accept-charset="utf-8" class="space-y-4">
+      <input type="hidden" name="next" value="" id="next-input">
+
+      <div>
+        <label for="username" class="block text-sm text-gray-300 mb-1">用户名</label>
+        <input id="username" name="username" type="text" required autocomplete="username"
+               autofocus
+               class="input w-full rounded-md px-3 py-2 text-sm">
+      </div>
+
+      <div>
+        <label for="password" class="block text-sm text-gray-300 mb-1">密码</label>
+        <input id="password" name="password" type="password" required autocomplete="current-password"
+               class="input w-full rounded-md px-3 py-2 text-sm">
+      </div>
+
+      <button type="submit"
+              class="btn-primary w-full rounded-md py-2 text-sm font-medium text-white transition">
+        登录
+      </button>
+    </form>
+
+    <footer class="mt-6 text-xs text-gray-500 text-center">
+      <p>会话有效期 24 小时 · 仅本站授权用户可访问</p>
+    </footer>
+  </main>
+
+  <script>
+    // 从 URL ?next=xxx 提取跳转目标，填到隐藏字段（防开放重定向：服务端已二次校验）
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var next = params.get('next') || '/';
+      // 同源 / 相对路径才接受
+      if (!next.startsWith('/') || next.startsWith('//')) next = '/';
+      document.getElementById('next-input').value = next;
+    })();
+  </script>
+</body>
+</html>

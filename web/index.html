@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>zm-auto · 自动注册管理面板</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bg: '#0b0f17',
+            panel: '#111827',
+            border: '#1f2937',
+            accent: '#3b82f6',
+            ok: '#10b981',
+            warn: '#f59e0b',
+            err: '#ef4444',
+          },
+          fontFamily: {
+            mono: ['JetBrains Mono', 'Consolas', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+    /* 自定义滚动条 */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #0b0f17; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+    /* 日志颜色 */
+    .log-line { white-space: pre-wrap; word-break: break-all; }
+    .log-red { color: #f87171; }
+    .log-green { color: #34d399; }
+    .log-yellow { color: #fbbf24; }
+    .log-cyan { color: #22d3ee; }
+    textarea { tab-size: 2; }
+  </style>
+</head>
+<body class="bg-bg text-gray-200 min-h-screen">
+  <!-- 顶部 -->
+  <header class="border-b border-border bg-panel/60 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-accent/20 border border-accent/40 flex items-center justify-center font-mono font-bold text-accent">zm</div>
+        <div>
+          <h1 class="text-lg font-semibold leading-tight">自动注册管理面板</h1>
+          <p class="text-xs text-gray-500 leading-tight">HTTP + 2captcha · 本地工具</p>
+        </div>
+      </div>
+      <!-- 状态徽章 -->
+      <div id="statusBadge" class="flex items-center gap-2 text-sm">
+        <span class="w-2 h-2 rounded-full bg-gray-500"></span>
+        <span class="text-gray-400">空闲</span>
+      </div>
+    </div>
+    <!-- Tabs -->
+    <nav class="max-w-7xl mx-auto px-4 flex gap-1">
+      <button data-tab="run" class="tab-btn px-4 py-2 text-sm border-b-2 border-accent text-white">运行</button>
+      <button data-tab="config" class="tab-btn px-4 py-2 text-sm border-b-2 border-transparent text-gray-400 hover:text-white">配置</button>
+      <button data-tab="accounts" class="tab-btn px-4 py-2 text-sm border-b-2 border-transparent text-gray-400 hover:text-white">账号 (<span id="accountCount">0</span>)</button>
+    </nav>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-6 pb-32">
+    <!-- ====================== 运行 Tab ====================== -->
+    <section id="tab-run" class="tab-panel">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        <!-- 启动卡片 -->
+        <div class="bg-panel border border-border rounded-xl p-5 lg:col-span-2">
+          <h2 class="text-base font-semibold mb-4">启动注册任务</h2>
+          <div class="grid grid-cols-2 gap-4">
+            <label class="block">
+              <span class="text-xs text-gray-400">注册数量 (total)</span>
+              <input id="inputTotal" type="number" min="1" max="500" value="1"
+                class="mt-1 w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none" />
+            </label>
+            <label class="block">
+              <span class="text-xs text-gray-400">并发线程 (threads)</span>
+              <input id="inputThreads" type="number" min="1" max="20" value="1"
+                class="mt-1 w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none" />
+            </label>
+          </div>
+          <div class="flex items-center gap-3 mt-5">
+            <button id="btnStart"
+              class="px-5 py-2 bg-accent hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-white text-sm font-medium transition">
+              ▶ 启动
+            </button>
+            <span id="runHint" class="text-xs text-gray-500"></span>
+          </div>
+        </div>
+        <!-- 统计卡片 -->
+        <div class="bg-panel border border-border rounded-xl p-5">
+          <h2 class="text-base font-semibold mb-4">实时统计</h2>
+          <div class="grid grid-cols-2 gap-3 text-center">
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statDone" class="text-2xl font-mono font-bold text-white">0</div>
+              <div class="text-xs text-gray-500 mt-1">已完成</div>
+            </div>
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statSuccess" class="text-2xl font-mono font-bold text-ok">0</div>
+              <div class="text-xs text-gray-500 mt-1">成功</div>
+            </div>
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statFail" class="text-2xl font-mono font-bold text-err">0</div>
+              <div class="text-xs text-gray-500 mt-1">失败</div>
+            </div>
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statAvg" class="text-2xl font-mono font-bold text-cyan">—</div>
+              <div class="text-xs text-gray-500 mt-1">平均秒/个</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 进度条 -->
+      <div class="bg-panel border border-border rounded-xl p-5 mb-6">
+        <div class="flex items-center justify-between text-xs text-gray-400 mb-2">
+          <span>进度</span>
+          <span id="progressText">0 / 0</span>
+        </div>
+        <div class="h-2 bg-bg rounded-full overflow-hidden">
+          <div id="progressBar" class="h-full bg-accent transition-all duration-300" style="width: 0%"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================== 配置 Tab ====================== -->
+    <section id="tab-config" class="tab-panel hidden">
+      <div class="bg-panel border border-border rounded-xl p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h2 class="text-base font-semibold">config.json 编辑器</h2>
+            <p class="text-xs text-gray-500 mt-1">
+              完整 JSON 编辑，保存后立即热加载到注册脚本。字段说明见
+              <code class="text-accent">config.example.json</code> 与 README。
+            </p>
+          </div>
+          <div class="flex gap-2">
+            <button id="btnFormat" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg">格式化</button>
+            <button id="btnReload" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg">重新加载</button>
+            <button id="btnSave" class="px-4 py-1.5 text-xs bg-accent hover:bg-blue-500 text-white rounded-lg font-medium">保存</button>
+          </div>
+        </div>
+        <textarea id="configEditor" spellcheck="false"
+          class="w-full h-[60vh] bg-bg border border-border rounded-lg p-4 font-mono text-sm leading-relaxed focus:border-accent focus:outline-none"></textarea>
+        <div id="configMsg" class="text-xs mt-2 h-4"></div>
+      </div>
+    </section>
+
+    <!-- ====================== 账号 Tab ====================== -->
+    <section id="tab-accounts" class="tab-panel hidden">
+      <div class="bg-panel border border-border rounded-xl p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-base font-semibold">已注册账号 (<span id="accountCount2">0</span>)</h2>
+          <div class="flex gap-2">
+            <button id="btnExport" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg">导出 JSON</button>
+            <button id="btnCopyAll" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg">复制全部 Key</button>
+            <button id="btnClear" class="px-3 py-1.5 text-xs bg-bg border border-err/40 text-err hover:bg-err/10 rounded-lg">清空</button>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="text-xs text-gray-500 border-b border-border">
+              <tr>
+                <th class="text-left py-2 px-3 font-medium">邮箱</th>
+                <th class="text-left py-2 px-3 font-medium">User ID</th>
+                <th class="text-left py-2 px-3 font-medium">API Key</th>
+                <th class="text-left py-2 px-3 font-medium">Sub2API ID</th>
+                <th class="text-left py-2 px-3 font-medium">创建时间</th>
+                <th class="text-right py-2 px-3 font-medium">操作</th>
+              </tr>
+            </thead>
+            <tbody id="accountsBody" class="divide-y divide-border"></tbody>
+          </table>
+        </div>
+        <div id="accountsEmpty" class="text-center text-gray-500 text-sm py-12 hidden">
+          暂无账号，去"运行" Tab 启动第一个任务
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ====================== 底部日志抽屉 ====================== -->
+  <div id="logDrawer" class="fixed bottom-0 left-0 right-0 bg-panel border-t border-border shadow-2xl z-30 transition-transform">
+    <!-- header -->
+    <div class="flex items-center justify-between px-4 py-2 border-b border-border cursor-pointer select-none" id="logHeader">
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-medium">实时日志</span>
+        <span id="logCount" class="text-xs text-gray-500 font-mono">0 行</span>
+        <span id="sseStatus" class="text-xs px-2 py-0.5 rounded bg-gray-700 text-gray-300">未连接</span>
+      </div>
+      <div class="flex items-center gap-2" onclick="event.stopPropagation()">
+        <label class="flex items-center gap-1 text-xs text-gray-400 cursor-pointer">
+          <input id="autoscroll" type="checkbox" checked class="accent-blue-500" /> 自动滚动
+        </label>
+        <button id="btnClearLog" class="text-xs px-2 py-1 hover:bg-bg rounded">清屏</button>
+        <button id="btnToggleLog" class="text-xs px-2 py-1 hover:bg-bg rounded">收起 ▾</button>
+      </div>
+    </div>
+    <!-- content -->
+    <div id="logBody" class="h-48 overflow-y-auto p-3 font-mono text-xs leading-relaxed"></div>
+  </div>
+
+  <script>
+    // ======================================================================== //
+    // 工具
+    // ======================================================================== //
+    const $ = (s) => document.querySelector(s);
+    const $$ = (s) => document.querySelectorAll(s);
+    const api = (path, opts = {}) => fetch(path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...opts,
+    }).then(async (r) => {
+      const txt = await r.text();
+      let data; try { data = txt ? JSON.parse(txt) : {}; } catch { data = txt; }
+      if (!r.ok) throw new Error((data && data.detail) || `HTTP ${r.status}`);
+      return data;
+    });
+
+    // ======================================================================== //
+    // Tab 切换
+    // ======================================================================== //
+    $$('.tab-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        $$('.tab-btn').forEach((b) => {
+          b.classList.toggle('border-accent', b === btn);
+          b.classList.toggle('text-white', b === btn);
+          b.classList.toggle('border-transparent', b !== btn);
+          b.classList.toggle('text-gray-400', b !== btn);
+        });
+        $$('.tab-panel').forEach((p) => p.classList.add('hidden'));
+        $(`#tab-${tab}`).classList.remove('hidden');
+        if (tab === 'accounts') loadAccounts();
+        if (tab === 'config') loadConfig();
+      });
+    });
+
+    // ======================================================================== //
+    // 状态轮询
+    // ======================================================================== //
+    let prevStatus = null;
+    async function pollStatus() {
+      try {
+        const s = await api('/api/status');
+        const t = s.task, st = s.stats;
+        // 徽章
+        const badge = $('#statusBadge');
+        const colors = {
+          idle: ['bg-gray-500', '空闲'],
+          running: ['bg-ok animate-pulse', '运行中'],
+          done: ['bg-accent', '已完成'],
+          error: ['bg-err', '出错'],
+        };
+        const [dotCls, label] = colors[t.status] || colors.idle;
+        badge.innerHTML = `<span class="w-2 h-2 rounded-full ${dotCls}"></span><span class="text-gray-300">${label}</span>`;
+
+        // 统计
+        $('#statDone').textContent = st.done || 0;
+        $('#statSuccess').textContent = st.success || 0;
+        $('#statFail').textContent = st.fail || 0;
+        const avg = st.success > 0 && st.start_time ? ((Date.now() / 1000) - st.start_time) / st.success : null;
+        $('#statAvg').textContent = avg != null ? avg.toFixed(1) : '—';
+
+        // 进度
+        const total = t.total || st.done || 0;
+        const done = st.done || 0;
+        const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
+        $('#progressBar').style.width = pct + '%';
+        $('#progressText').textContent = `${done} / ${total}`;
+
+        // 按钮态
+        const running = t.status === 'running';
+        $('#btnStart').disabled = running;
+        $('#btnStart').textContent = running ? '运行中…' : '▶ 启动';
+        $('#runHint').textContent = running ? `任务进行中 (${done}/${total})` : '';
+
+        // 任务结束时刷新账号
+        if (prevStatus === 'running' && t.status !== 'running') {
+          loadAccounts();
+          if (!$('#tab-accounts').classList.contains('hidden')) {}
+        }
+        prevStatus = t.status;
+
+        // 出错弹 toast
+        if (t.status === 'error' && t.error) {
+          $('#runHint').textContent = '错误：' + t.error;
+        }
+      } catch (e) {
+        console.warn('poll failed', e);
+      }
+    }
+    setInterval(pollStatus, 2000);
+    pollStatus();
+
+    // ======================================================================== //
+    // 启动任务
+    // ======================================================================== //
+    $('#btnStart').addEventListener('click', async () => {
+      const total = parseInt($('#inputTotal').value, 10);
+      const threads = parseInt($('#inputThreads').value, 10);
+      if (!total || total < 1) return alert('total 不合法');
+      try {
+        await api('/api/run', {
+          method: 'POST',
+          body: JSON.stringify({ total, threads }),
+        });
+        $('#runHint').textContent = '任务已启动…';
+        setTimeout(pollStatus, 200);
+      } catch (e) {
+        alert('启动失败：' + e.message);
+      }
+    });
+
+    // ======================================================================== //
+    // 配置编辑
+    // ======================================================================== //
+    async function loadConfig() {
+      try {
+        const cfg = await api('/api/config');
+        $('#configEditor').value = JSON.stringify(cfg, null, 2);
+        $('#configMsg').textContent = '';
+      } catch (e) {
+        $('#configMsg').innerHTML = `<span class="text-err">加载失败：${e.message}</span>`;
+      }
+    }
+    $('#btnSave').addEventListener('click', async () => {
+      try {
+        const obj = JSON.parse($('#configEditor').value);
+        await api('/api/config', { method: 'PUT', body: JSON.stringify(obj) });
+        $('#configMsg').innerHTML = `<span class="text-ok">✓ 已保存并热加载</span>`;
+      } catch (e) {
+        $('#configMsg').innerHTML = `<span class="text-err">保存失败：${e.message}</span>`;
+      }
+    });
+    $('#btnFormat').addEventListener('click', () => {
+      try {
+        const obj = JSON.parse($('#configEditor').value);
+        $('#configEditor').value = JSON.stringify(obj, null, 2);
+        $('#configMsg').innerHTML = `<span class="text-ok">✓ 格式化完成</span>`;
+      } catch (e) {
+        $('#configMsg').innerHTML = `<span class="text-err">JSON 解析失败：${e.message}</span>`;
+      }
+    });
+    $('#btnReload').addEventListener('click', loadConfig);
+
+    // ======================================================================== //
+    // 账号列表
+    // ======================================================================== //
+    async function loadAccounts() {
+      try {
+        const list = await api('/api/accounts');
+        const body = $('#accountsBody');
+        body.innerHTML = '';
+        $('#accountCount').textContent = list.length;
+        $('#accountCount2').textContent = list.length;
+        $('#accountsEmpty').classList.toggle('hidden', list.length > 0);
+        for (const a of list) {
+          const tr = document.createElement('tr');
+          tr.className = 'hover:bg-bg/40';
+          const key = a.api_key || '';
+          const maskedKey = key ? `${key.slice(0, 10)}…${key.slice(-4)}` : '—';
+          tr.innerHTML = `
+            <td class="py-2 px-3 font-mono text-xs">${escapeHtml(a.email || '')}</td>
+            <td class="py-2 px-3 font-mono text-xs text-gray-400">${escapeHtml(a.user_id || '—')}</td>
+            <td class="py-2 px-3 font-mono text-xs">
+              <span class="text-accent">${escapeHtml(maskedKey)}</span>
+            </td>
+            <td class="py-2 px-3 font-mono text-xs">${a.sub2api_id != null ? a.sub2api_id : '—'}</td>
+            <td class="py-2 px-3 text-xs text-gray-400">${formatTime(a.created_at)}</td>
+            <td class="py-2 px-3 text-right">
+              <button class="text-xs px-2 py-1 hover:bg-bg rounded copy-key" data-key="${escapeHtml(key)}">复制</button>
+            </td>`;
+          body.appendChild(tr);
+        }
+        body.querySelectorAll('.copy-key').forEach((b) => {
+          b.addEventListener('click', () => {
+            navigator.clipboard.writeText(b.dataset.key);
+            b.textContent = '✓';
+            setTimeout(() => (b.textContent = '复制'), 1000);
+          });
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    $('#btnExport').addEventListener('click', async () => {
+      const list = await api('/api/accounts');
+      const blob = new Blob([JSON.stringify(list, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `accounts-${Date.now()}.json`; a.click();
+      URL.revokeObjectURL(url);
+    });
+    $('#btnCopyAll').addEventListener('click', async () => {
+      const list = await api('/api/accounts');
+      const keys = list.map((x) => x.api_key).filter(Boolean).join('\n');
+      navigator.clipboard.writeText(keys);
+      alert(`已复制 ${list.length} 个 Key`);
+    });
+    $('#btnClear').addEventListener('click', async () => {
+      if (!confirm('确定清空 accounts.json？已导入 Sub2API 的账号不会被撤回。')) return;
+      await api('/api/accounts', { method: 'DELETE' });
+      loadAccounts();
+    });
+
+    // ======================================================================== //
+    // SSE 日志流
+    // ======================================================================== //
+    let logLines = 0;
+    function connectSSE() {
+      const es = new EventSource('/api/logs');
+      $('#sseStatus').textContent = '连接中…';
+      es.addEventListener('open', () => {
+        $('#sseStatus').textContent = '已连接';
+        $('#sseStatus').className = 'text-xs px-2 py-0.5 rounded bg-ok/20 text-ok';
+      });
+      es.addEventListener('log', (e) => {
+        let payload;
+        try { payload = JSON.parse(e.data); } catch { payload = { text: e.data }; }
+        appendLog(payload);
+      });
+      es.addEventListener('error', () => {
+        $('#sseStatus').textContent = '重连中…';
+        $('#sseStatus').className = 'text-xs px-2 py-0.5 rounded bg-err/20 text-err';
+      });
+    }
+    function appendLog({ ts, text, color }) {
+      const body = $('#logBody');
+      const div = document.createElement('div');
+      div.className = 'log-line';
+      const colorCls = { red: 'log-red', green: 'log-green', yellow: 'log-yellow', cyan: 'log-cyan' }[color] || '';
+      div.innerHTML = `<span class="text-gray-600">${ts || ''}</span> <span class="${colorCls}">${escapeHtml(text || '')}</span>`;
+      body.appendChild(div);
+      logLines++;
+      $('#logCount').textContent = logLines + ' 行';
+      // 限制 DOM 节点数（防内存爆炸）
+      if (body.children.length > 2000) body.removeChild(body.firstChild);
+      if ($('#autoscroll').checked) body.scrollTop = body.scrollHeight;
+    }
+    $('#btnClearLog').addEventListener('click', () => {
+      $('#logBody').innerHTML = '';
+      logLines = 0;
+      $('#logCount').textContent = '0 行';
+    });
+
+    // 日志抽屉折叠
+    let logCollapsed = false;
+    $('#logHeader').addEventListener('click', () => {
+      logCollapsed = !logCollapsed;
+      $('#logBody').style.display = logCollapsed ? 'none' : '';
+      $('#btnToggleLog').textContent = logCollapsed ? '展开 ▴' : '收起 ▾';
+    });
+
+    // ======================================================================== //
+    // 小工具
+    // ======================================================================== //
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function formatTime(iso) {
+      if (!iso) return '—';
+      try {
+        const d = new Date(iso);
+        return d.toLocaleString('zh-CN', { hour12: false });
+      } catch { return iso; }
+    }
+
+    // ======================================================================== //
+    // 初始化
+    // ======================================================================== //
+    connectSSE();
+    loadAccounts();
+  </script>
+</body>
+</html>
