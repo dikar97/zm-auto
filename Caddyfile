@@ -1,0 +1,32 @@
+# Caddy 反向代理配置
+# Caddy 会自动为 {$DOMAIN} 申请 Let's Encrypt 证书，前提：
+#   1. 域名 DNS 的 A 记录指向本 VPS 公网 IP
+#   2. VPS 的 80 / 443 端口对外开放（80 用于 ACME HTTP-01 验证）
+#   3. DOMAIN 环境变量在 .env 里设置（docker-compose 自动注入）
+{$DOMAIN} {
+    encode gzip zstd
+
+    # 上游应用（docker-compose 服务名 app）
+    reverse_proxy app:8000 {
+        # 透传真实客户端 IP / Host（让 FastAPI 日志可见）
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # 静态响应头
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # 跨域完全不需要，浏览器同源
+        Cross-Origin-Opener-Policy "same-origin"
+    }
+
+    # 日志到 stdout（docker logs 可见）
+    log {
+        output stdout
+        format console
+    }
+}

@@ -1,0 +1,46 @@
+services:
+  app:
+    build: .
+    image: zm-auto:latest
+    container_name: zm-auto-app
+    env_file: .env
+    volumes:
+      # 容器内 /app/data 由 entrypoint.sh 软链到 /app/config.json 和 /app/accounts.json
+      # 宿主机 ./data 目录持久化所有配置 + 账号数据
+      - ./data:/app/data
+    restart: unless-stopped
+    networks:
+      - zm-net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket,sys; s=socket.socket(); s.settimeout(3); sys.exit(0 if s.connect_ex(('127.0.0.1', 8000))==0 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: zm-auto-caddy
+    ports:
+      - "80:80"     # ACME HTTP-01 验证 + HTTP→HTTPS 跳转
+      - "443:443"   # HTTPS
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data         # 证书 + ACME 状态（持久化，避免每次重启重新签发）
+      - caddy_config:/config
+    environment:
+      - DOMAIN=${DOMAIN}
+    depends_on:
+      - app
+    restart: unless-stopped
+    networks:
+      - zm-net
+    # Caddy 在容器内默认监听 80/443，docker 网络模式 bridge 时用 ports 映射即可
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  zm-net:
+    driver: bridge
