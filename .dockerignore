@@ -1,0 +1,29 @@
+# 构建产物排除项（避免镜像膨胀 / 泄漏本机数据）
+.git
+.gitignore
+.github
+.vscode
+.idea
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.md
+!README.md
+
+# 运行时数据（容器内通过 data/ 卷 + 软链挂载）
+data/
+config.json
+accounts.json
+
+# 本机配置 / 凭证
+.env
+.env.local
+.env.*.local
+
+# 临时文件
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
