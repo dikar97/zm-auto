@@ -152,23 +152,73 @@
     <!-- ====================== 配置 Tab ====================== -->
     <section id="tab-config" class="tab-panel hidden">
       <div class="bg-panel border border-border rounded-xl p-5">
-        <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
           <div>
-            <h2 class="text-base font-semibold">config.json 编辑器</h2>
+            <h2 class="text-base font-semibold">配置</h2>
             <p class="text-xs text-gray-500 mt-1">
-              完整 JSON 编辑，保存后立即热加载到注册脚本。字段说明见
+              保存后立即热加载到注册脚本。字段说明见
               <code class="text-accent">config.example.json</code> 与 README。
             </p>
           </div>
-          <div class="flex gap-2">
-            <button id="btnFormat" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg">格式化</button>
+          <div class="flex items-center gap-2">
+            <!-- 模式切换 -->
+            <div class="flex rounded-lg border border-border overflow-hidden text-xs">
+              <button id="modeForm" class="px-3 py-1.5 bg-accent text-white">表单</button>
+              <button id="modeJson" class="px-3 py-1.5 bg-bg text-gray-400 hover:text-white">JSON</button>
+            </div>
+            <button id="btnFormat" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg hidden">格式化</button>
             <button id="btnReload" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg">重新加载</button>
             <button id="btnSave" class="px-4 py-1.5 text-xs bg-accent hover:bg-blue-500 text-white rounded-lg font-medium">保存</button>
           </div>
         </div>
+
+        <!-- ---------- 表单模式 ---------- -->
+        <div id="configForm" class="space-y-5">
+          <!-- 代理设置 -->
+          <div class="border border-border rounded-lg p-4">
+            <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
+              <span class="text-accent">●</span> 代理设置
+            </h3>
+            <label class="block mb-4">
+              <span class="text-xs text-gray-400">全局代理（留空=直连，单个代理 URL）</span>
+              <input id="fGlobalProxy" type="text" placeholder="http://127.0.0.1:7890"
+                class="mt-1 w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none" />
+            </label>
+
+            <!-- 批量代理池 -->
+            <label class="block mb-4">
+              <span class="text-xs text-gray-400">批量代理池 raw_proxy_pool（每行一个，轮询分配给各 worker）</span>
+              <textarea id="fRawProxyPool" rows="5" spellcheck="false" placeholder="1.2.3.4:8080&#10;1.2.3.4:8080:user:pass&#10;socks5://5.6.7.8:1080&#10;http://user:pass@host:port"
+                class="mt-1 w-full bg-bg border border-border rounded-lg px-3 py-2 text-xs font-mono leading-relaxed focus:border-accent focus:outline-none"></textarea>
+              <span class="text-[11px] text-gray-600">支持 host:port / host:port:user:pass / scheme://… / scheme://user:pass@host:port，注释行(#)与非法行自动忽略</span>
+            </label>
+
+            <!-- 结构化代理节点 -->
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs text-gray-400">代理节点 register_proxies（可绑定 Sub2API proxy_id）</span>
+                <button id="btnAddProxyNode" class="text-xs px-2 py-1 bg-bg border border-border hover:border-accent rounded">+ 添加节点</button>
+              </div>
+              <div id="proxyNodesList" class="space-y-2"></div>
+              <p id="proxyNodesEmpty" class="text-xs text-gray-600 py-2 hidden">暂无结构化节点，可点击「添加节点」或使用上方批量代理池。</p>
+            </div>
+          </div>
+
+          <!-- 邮箱 providers -->
+          <div class="border border-border rounded-lg p-4">
+            <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
+              <span class="text-accent">●</span> 邮箱 Provider
+            </h3>
+            <div id="mailProvidersList" class="space-y-3"></div>
+            <p id="mailProvidersEmpty" class="text-xs text-gray-600 py-2 hidden">config 中无 mail.providers 字段。</p>
+          </div>
+        </div>
+
+        <!-- ---------- JSON 模式 ---------- -->
         <textarea id="configEditor" spellcheck="false"
-          class="w-full h-[60vh] bg-bg border border-border rounded-lg p-4 font-mono text-sm leading-relaxed focus:border-accent focus:outline-none"></textarea>
-        <div id="configMsg" class="text-xs mt-2 h-4"></div>
+          class="w-full h-[60vh] bg-bg border border-border rounded-lg p-4 font-mono text-sm leading-relaxed focus:border-accent focus:outline-none hidden"></textarea>
+
+        <div id="configMsg" class="text-xs mt-3 h-4"></div>
       </div>
     </section>
 
@@ -369,21 +419,154 @@
     });
 
     // ======================================================================== //
-    // 配置编辑
+    // 配置编辑（currentConfig 为全量配置单一数据源，表单只读写其中部分字段）
     // ======================================================================== //
+    let currentConfig = {};
+    let configMode = 'form';
+
     async function loadConfig() {
       try {
-        const cfg = await api('/api/config');
-        $('#configEditor').value = JSON.stringify(cfg, null, 2);
+        currentConfig = await api('/api/config') || {};
+        renderConfigForm();
+        $('#configEditor').value = JSON.stringify(currentConfig, null, 2);
         $('#configMsg').textContent = '';
       } catch (e) {
         $('#configMsg').innerHTML = `<span class="text-err">加载失败：${e.message}</span>`;
       }
     }
+
+    function renderConfigForm() {
+      $('#fGlobalProxy').value = currentConfig.proxy || '';
+      const pool = currentConfig.raw_proxy_pool;
+      $('#fRawProxyPool').value = Array.isArray(pool) ? pool.join('\n') : (pool || '');
+      renderProxyNodes(currentConfig.register_proxies || []);
+      renderMailProviders((currentConfig.mail && currentConfig.mail.providers) || []);
+    }
+
+    function renderProxyNodes(nodes) {
+      const list = $('#proxyNodesList');
+      list.innerHTML = '';
+      $('#proxyNodesEmpty').classList.toggle('hidden', nodes.length > 0);
+      nodes.forEach((n, i) => {
+        const row = document.createElement('div');
+        row.className = 'proxy-node grid grid-cols-12 gap-2 items-center';
+        row.innerHTML = `
+          <input class="pn-name col-span-3 bg-bg border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent focus:outline-none" placeholder="名称" value="${escapeHtml(n.name || '')}" />
+          <input class="pn-url col-span-5 bg-bg border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent focus:outline-none" placeholder="http://host:port" value="${escapeHtml(n.proxy_url || '')}" />
+          <input class="pn-sid col-span-3 bg-bg border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent focus:outline-none" placeholder="Sub2API proxy_id" value="${n.sub2api_proxy_id != null ? escapeHtml(String(n.sub2api_proxy_id)) : ''}" />
+          <button class="pn-del col-span-1 text-xs text-err hover:bg-err/10 rounded py-1.5" data-i="${i}">✕</button>`;
+        list.appendChild(row);
+      });
+      list.querySelectorAll('.pn-del').forEach((b) => {
+        b.addEventListener('click', () => { b.closest('.proxy-node').remove(); refreshProxyNodesEmpty(); });
+      });
+    }
+    function refreshProxyNodesEmpty() {
+      $('#proxyNodesEmpty').classList.toggle('hidden', $('#proxyNodesList').children.length > 0);
+    }
+    $('#btnAddProxyNode').addEventListener('click', () => {
+      const nodes = collectProxyNodes();
+      nodes.push({ name: '', proxy_url: '', sub2api_proxy_id: null });
+      renderProxyNodes(nodes);
+    });
+    function collectProxyNodes() {
+      return Array.from($('#proxyNodesList').querySelectorAll('.proxy-node')).map((row) => {
+        const sid = row.querySelector('.pn-sid').value.trim();
+        const node = {
+          name: row.querySelector('.pn-name').value.trim(),
+          proxy_url: row.querySelector('.pn-url').value.trim(),
+          sub2api_proxy_id: sid === '' ? null : (Number.isNaN(Number(sid)) ? sid : Number(sid)),
+        };
+        return node;
+      });
+    }
+
+    function renderMailProviders(providers) {
+      const list = $('#mailProvidersList');
+      list.innerHTML = '';
+      $('#mailProvidersEmpty').classList.toggle('hidden', providers.length > 0);
+      providers.forEach((p, i) => {
+        const label = p.name || p.type || `provider ${i + 1}`;
+        const hasDomainArr = Array.isArray(p.domain);
+        const domainVal = hasDomainArr ? p.domain.join(', ') : (p.default_domain != null ? p.default_domain : '');
+        const domainField = (hasDomainArr || p.default_domain != null) ? `
+            <input class="mp-domain w-full bg-bg border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent focus:outline-none"
+              placeholder="${hasDomainArr ? '多个域名用逗号分隔' : '默认域名'}" value="${escapeHtml(String(domainVal))}" />` : '';
+        const row = document.createElement('div');
+        row.className = 'mail-provider border border-border/60 rounded-lg p-3';
+        row.dataset.i = i;
+        row.innerHTML = `
+          <div class="flex items-center justify-between gap-3 ${domainField ? 'mb-2' : ''}">
+            <span class="text-xs font-mono">${escapeHtml(label)}</span>
+            <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+              <input type="checkbox" class="mp-enable accent-blue-500" ${p.enable ? 'checked' : ''} /> 启用
+            </label>
+          </div>${domainField}`;
+        list.appendChild(row);
+      });
+    }
+    function collectMailProviders() {
+      const original = (currentConfig.mail && currentConfig.mail.providers) || [];
+      return Array.from($('#mailProvidersList').querySelectorAll('.mail-provider')).map((row) => {
+        const idx = parseInt(row.dataset.i, 10);
+        const p = { ...original[idx] };
+        p.enable = row.querySelector('.mp-enable').checked;
+        const domainEl = row.querySelector('.mp-domain');
+        if (domainEl) {
+          if (Array.isArray(p.domain)) {
+            p.domain = domainEl.value.split(',').map((s) => s.trim()).filter(Boolean);
+          } else {
+            p.default_domain = domainEl.value.trim();
+          }
+        }
+        return p;
+      });
+    }
+
+    function collectForm() {
+      currentConfig.proxy = $('#fGlobalProxy').value.trim();
+      currentConfig.raw_proxy_pool = $('#fRawProxyPool').value
+        .split('\n').map((s) => s.trim()).filter(Boolean);
+      currentConfig.register_proxies = collectProxyNodes();
+      if (currentConfig.mail && Array.isArray(currentConfig.mail.providers)) {
+        currentConfig.mail.providers = collectMailProviders();
+      }
+    }
+
+    function switchMode(mode) {
+      if (mode === configMode) return;
+      if (mode === 'json') {
+        collectForm();
+        $('#configEditor').value = JSON.stringify(currentConfig, null, 2);
+      } else {
+        try {
+          currentConfig = JSON.parse($('#configEditor').value);
+        } catch (e) {
+          $('#configMsg').innerHTML = `<span class="text-err">JSON 解析失败，无法切回表单：${e.message}</span>`;
+          return;
+        }
+        renderConfigForm();
+      }
+      configMode = mode;
+      $('#configForm').classList.toggle('hidden', mode !== 'form');
+      $('#configEditor').classList.toggle('hidden', mode !== 'json');
+      $('#btnFormat').classList.toggle('hidden', mode !== 'json');
+      $('#modeForm').className = mode === 'form' ? 'px-3 py-1.5 bg-accent text-white' : 'px-3 py-1.5 bg-bg text-gray-400 hover:text-white';
+      $('#modeJson').className = mode === 'json' ? 'px-3 py-1.5 bg-accent text-white' : 'px-3 py-1.5 bg-bg text-gray-400 hover:text-white';
+      $('#configMsg').textContent = '';
+    }
+    $('#modeForm').addEventListener('click', () => switchMode('form'));
+    $('#modeJson').addEventListener('click', () => switchMode('json'));
+
     $('#btnSave').addEventListener('click', async () => {
       try {
-        const obj = JSON.parse($('#configEditor').value);
-        await api('/api/config', { method: 'PUT', body: JSON.stringify(obj) });
+        if (configMode === 'json') {
+          currentConfig = JSON.parse($('#configEditor').value);
+        } else {
+          collectForm();
+        }
+        await api('/api/config', { method: 'PUT', body: JSON.stringify(currentConfig) });
+        $('#configEditor').value = JSON.stringify(currentConfig, null, 2);
         $('#configMsg').innerHTML = `<span class="text-ok">✓ 已保存并热加载</span>`;
       } catch (e) {
         $('#configMsg').innerHTML = `<span class="text-err">保存失败：${e.message}</span>`;

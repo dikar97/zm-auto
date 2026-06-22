@@ -22,6 +22,7 @@ from captcha_solver import CaptchaSolver
 from sub2api_importer import Sub2APIImporter
 from utils.tg_notifier import TgNotifier
 from utils.config import find_config_file, format_docker_url, load_config_file
+from utils.proxy_pool import parse_proxy_pool
 import itertools
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -93,9 +94,24 @@ def _next_zm_name() -> str:
 
 
 def _init_proxy_rotation(cfg: dict) -> None:
-    """Initialize the shared register-proxy rotation from config."""
+    """Initialize the shared register-proxy rotation from config.
+
+    合并两类代理来源（按顺序）：
+    1. ``register_proxies``: 结构化节点 {name, proxy_url, sub2api_proxy_id}
+    2. ``raw_proxy_pool``: 批量原始代理（多行字符串或列表），解析为
+       {name: "raw-N", proxy_url, sub2api_proxy_id: None}
+    两者都为空时禁用轮询（回退到全局 proxy）。
+    """
     global _register_proxy_cycle
-    proxies = list(cfg.get("register_proxies", []))
+    proxies: list[dict] = []
+    for entry in cfg.get("register_proxies", []) or []:
+        if isinstance(entry, dict) and entry.get("proxy_url"):
+            proxies.append(dict(entry))
+
+    raw_urls = parse_proxy_pool(cfg.get("raw_proxy_pool"))
+    for i, url in enumerate(raw_urls, 1):
+        proxies.append({"name": f"raw-{i}", "proxy_url": url, "sub2api_proxy_id": None})
+
     if proxies:
         _register_proxy_cycle = itertools.cycle(proxies)
     else:
@@ -114,6 +130,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "providers": [],
     },
     "proxy": "",
+    "raw_proxy_pool": [],
     "register_proxies": [
         {"name": "JP", "proxy_url": "socks5://PROXY_HOST:PORT_1", "sub2api_proxy_id": 3},
         {"name": "KR", "proxy_url": "http://PROXY_HOST:PORT_2", "sub2api_proxy_id": 1},

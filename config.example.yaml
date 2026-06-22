@@ -68,6 +68,21 @@ register_proxies: []
 #     proxy_url: "http://user:pass@1.2.3.4:8080"
 #     sub2api_proxy_id: 1
 
+# 批量代理池（粘贴一批原始代理，自动解析并入轮询，不绑定 Sub2API proxy_id）。
+# 支持多种格式，每行一个；# 开头或空行忽略，非法行自动跳过：
+#   host:port                         -> http://host:port
+#   host:port:user:pass               -> http://user:pass@host:port
+#   scheme://host:port                -> 原样（scheme 可为 http/https/socks4/socks5/socks5h）
+#   scheme://user:pass@host:port      -> 原样
+#   scheme://host:port:user:pass      -> scheme://user:pass@host:port
+#   [2001:db8::1]:port                -> http://[2001:db8::1]:port
+raw_proxy_pool: []
+# 示例：
+# raw_proxy_pool:
+#   - "1.2.3.4:8080"
+#   - "5.6.7.8:1080:user:pass"
+#   - "socks5://9.10.11.12:1080"
+
 # ----------------------------- 注册任务 -----------------------------
 total: 1                    # 本次注册账号数量
 threads: 1                  # 并发线程数
