@@ -390,6 +390,31 @@ async def put_config(payload: dict[str, Any]) -> JSONResponse:
     return JSONResponse({"ok": True, "saved_at": datetime.now(timezone.utc).isoformat()})
 
 
+@app.post("/api/subscription/convert")
+async def convert_subscription_endpoint(body: dict[str, Any]) -> JSONResponse:
+    """订阅链接/内容转 raw_proxy_pool。body: {"url": str} 或 {"content": str}。
+    只提取 http/socks 类型节点，vmess/ss/trojan/vless 等需核心代理的节点会被跳过并计入 skipped。
+    返回 {proxies: [...], skipped: {type: count}, text: 多行字符串}。
+    """
+    from utils.subscription import convert_subscription, fetch_subscription
+
+    url = str(body.get("url", "")).strip()
+    content = str(body.get("content", ""))
+    if not url and not content:
+        raise HTTPException(status_code=400, detail="必须提供 url 或 content")
+
+    if url:
+        try:
+            content = fetch_subscription(url)
+        except Exception as exc:  # noqa: BLE001 - 网络错误统一回报给前端
+            raise HTTPException(status_code=400, detail=f"拉取订阅失败: {exc}")
+
+    proxies, skipped = convert_subscription(content)
+    return JSONResponse(
+        {"proxies": proxies, "skipped": skipped, "text": "\n".join(proxies)}
+    )
+
+
 @app.post("/api/run")
 async def start_run(body: dict[str, Any]) -> JSONResponse:
     """启动注册任务。body: {"total": int, "threads": int}"""

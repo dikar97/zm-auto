@@ -193,6 +193,17 @@
               <span class="text-[11px] text-gray-600">支持 host:port / host:port:user:pass / scheme://… / scheme://user:pass@host:port，注释行(#)与非法行自动忽略</span>
             </label>
 
+            <!-- 订阅导入 -->
+            <div class="mb-4">
+              <span class="text-xs text-gray-400">从订阅导入（仅提取 http/socks 节点，vmess/ss/trojan 等会跳过）</span>
+              <div class="flex gap-2 mt-1">
+                <input id="fSubUrl" type="text" spellcheck="false" placeholder="订阅链接 URL，或留空直接在上方批量代理池粘贴 Clash/base64 内容"
+                  class="flex-1 bg-bg border border-border rounded-lg px-3 py-2 text-xs font-mono focus:border-accent focus:outline-none" />
+                <button id="btnImportSub" class="text-xs px-3 py-2 bg-bg border border-border hover:border-accent rounded whitespace-nowrap">从订阅导入</button>
+              </div>
+              <span id="subImportStatus" class="text-[11px] text-gray-600"></span>
+            </div>
+
             <!-- 结构化代理节点 -->
             <div>
               <div class="flex items-center justify-between mb-2">
@@ -480,6 +491,30 @@
         return node;
       });
     }
+    $('#btnImportSub').addEventListener('click', async () => {
+      const url = $('#fSubUrl').value.trim();
+      const status = $('#subImportStatus');
+      const ta = $('#fRawProxyPool');
+      status.textContent = '导入中…';
+      status.className = 'text-[11px] text-gray-400';
+      try {
+        const body = url ? { url } : { content: ta.value };
+        const data = await api('/api/subscription/convert', { method: 'POST', body: JSON.stringify(body) });
+        const incoming = (data.text || '').split('\n').filter(Boolean);
+        if (url) {
+          const existing = ta.value.split('\n').map((l) => l.trim()).filter(Boolean);
+          ta.value = Array.from(new Set([...existing, ...incoming])).join('\n');
+        } else {
+          ta.value = incoming.join('\n');
+        }
+        const skippedStr = Object.entries(data.skipped || {}).map(([k, v]) => `${k}×${v}`).join(' ');
+        status.textContent = `导入 ${incoming.length} 个节点${skippedStr ? `，跳过 ${skippedStr}` : ''}`;
+        status.className = 'text-[11px] text-ok';
+      } catch (e) {
+        status.textContent = `导入失败：${e.message}`;
+        status.className = 'text-[11px] text-err';
+      }
+    });
 
     function renderMailProviders(providers) {
       const list = $('#mailProvidersList');
