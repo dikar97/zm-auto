@@ -343,3 +343,180 @@ class TestImportKey:
 
         with pytest.raises(RuntimeError, match="duplicate"):
             importer.import_key("sk-fail-key")
+
+
+# --------------------------------------------------------------------------- #
+# get_accounts（只读查询，mock Session.get）
+# --------------------------------------------------------------------------- #
+def _make_authed_importer() -> sub2api_importer.Sub2APIImporter:
+    """构造一个已设置 token 的 importer，跳过 login 聚焦只读逻辑。"""
+    imp = sub2api_importer.Sub2APIImporter(
+        {
+            "base_url": "https://sub2api.example.com",
+            "email": "admin@example.com",
+            "password": "secret",
+        }
+    )
+    imp._token = "PRE_AUTH"
+    return imp
+
+
+class TestGetAccounts:
+    def test_success_returns_inner_data(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_get(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            assert url == "https://sub2api.example.com/api/v1/admin/accounts"
+            assert kw["params"] == {"page": 2, "page_size": 50}
+            return _FakeResp(
+                {"code": 0, "data": {"items": [{"id": 1}], "total": 1}}
+            )
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "get", fake_get)
+        result = importer.get_accounts(page=2, page_size=50)
+        assert result == {"items": [{"id": 1}], "total": 1}
+
+    def test_nonzero_code_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_get(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            return _FakeResp({"code": 403, "message": "forbidden"})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "get", fake_get)
+        with pytest.raises(RuntimeError):
+            importer.get_accounts()
+
+    def test_missing_data_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_get(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            return _FakeResp({"code": 0})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "get", fake_get)
+        assert importer.get_accounts() == {}
+
+
+# --------------------------------------------------------------------------- #
+# get_all_accounts（翻页累积）
+# --------------------------------------------------------------------------- #
+class TestGetAllAccounts:
+    def test_paginates_until_total(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+        pages = {
+            1: {"items": [{"id": 1}, {"id": 2}], "total": 3},
+            2: {"items": [{"id": 3}], "total": 3},
+        }
+
+        def fake_get(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            page = kw["params"]["page"]
+            return _FakeResp({"code": 0, "data": pages[page]})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "get", fake_get)
+        result = importer.get_all_accounts(page_size=2)
+        assert [a["id"] for a in result] == [1, 2, 3]
+
+    def test_stops_on_short_page_without_total(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        importer = _make_authed_importer()
+
+        def fake_get(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            return _FakeResp({"code": 0, "data": {"items": [{"id": 1}]}})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "get", fake_get)
+        result = importer.get_all_accounts(page_size=100)
+        assert [a["id"] for a in result] == [1]
+
+    def test_empty_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_get(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            return _FakeResp({"code": 0, "data": {"items": [], "total": 0}})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "get", fake_get)
+        assert importer.get_all_accounts() == []
+
+
+# --------------------------------------------------------------------------- #
+# get_total_count
+# --------------------------------------------------------------------------- #
+class TestGetTotalCount:
+    def test_reads_total(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_get(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            assert kw["params"] == {"page": 1, "page_size": 1}
+            return _FakeResp({"code": 0, "data": {"items": [{"id": 1}], "total": 42}})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "get", fake_get)
+        assert importer.get_total_count() == 42
+
+    def test_fallback_to_items_len(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_get(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            return _FakeResp({"code": 0, "data": {"items": [{"id": 1}, {"id": 2}]}})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "get", fake_get)
+        assert importer.get_total_count() == 2
+
+
+# --------------------------------------------------------------------------- #
+# get_account_usage
+# --------------------------------------------------------------------------- #
+class TestGetAccountUsage:
+    def test_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_get(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            assert url == "https://sub2api.example.com/api/v1/admin/accounts/55/usage"
+            assert kw["params"] == {"timezone": "Asia/Shanghai"}
+            return _FakeResp({"code": 0, "data": {"requests": 100}})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "get", fake_get)
+        assert importer.get_account_usage(55) == {"requests": 100}
+
+    def test_nonzero_code_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_get(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            return _FakeResp({"code": 404, "message": "not found"})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "get", fake_get)
+        with pytest.raises(RuntimeError):
+            importer.get_account_usage(999)
+
+
+# --------------------------------------------------------------------------- #
+# test_connection
+# --------------------------------------------------------------------------- #
+class TestTestConnection:
+    def test_connected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_get(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            assert url == "https://sub2api.example.com/api/v1/admin/groups/all"
+            return _FakeResp({"code": 0, "data": []})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "get", fake_get)
+        assert importer.test_connection() is True
+
+    def test_nonzero_code_returns_false(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        importer = _make_authed_importer()
+
+        def fake_get(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            return _FakeResp({"code": 500})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "get", fake_get)
+        assert importer.test_connection() is False
+
+    def test_exception_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_get(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            raise ConnectionError("network down")
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "get", fake_get)
+        assert importer.test_connection() is False

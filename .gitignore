@@ -15,6 +15,7 @@ accounts.json
 
 # Orchestration artifacts
 .omo/
+.playwright-mcp/
 
 # OS
 .DS_Store
