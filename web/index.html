@@ -516,27 +516,51 @@
       }
     });
 
+    // 不在表单展开的内部字段（type 作卡片标题、enable 单独渲染、provider_ref 是运行时内部字段）
+    const MP_SKIP_KEYS = ['type', 'enable', 'provider_ref'];
+    function mailFieldControl(key, value) {
+      const vtype = Array.isArray(value) ? 'array' : (value === null ? 'string' : typeof value);
+      if (vtype === 'boolean') {
+        return `
+          <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+            <input type="checkbox" class="mp-field accent-blue-500" data-key="${escapeHtml(key)}" data-vtype="boolean" ${value ? 'checked' : ''} />
+            ${escapeHtml(key)}
+          </label>`;
+      }
+      let inputVal;
+      let placeholder = key;
+      if (vtype === 'array') { inputVal = value.join(', '); placeholder = '多个值用逗号分隔'; }
+      else if (vtype === 'number') { inputVal = String(value); placeholder = '数字'; }
+      else { inputVal = value == null ? '' : String(value); }
+      const inputType = vtype === 'number' ? 'number' : 'text';
+      return `
+        <div>
+          <label class="block text-[11px] text-gray-500 mb-0.5">${escapeHtml(key)}</label>
+          <input type="${inputType}" class="mp-field w-full bg-bg border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent focus:outline-none"
+            data-key="${escapeHtml(key)}" data-vtype="${vtype}" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(inputVal)}" />
+        </div>`;
+    }
     function renderMailProviders(providers) {
       const list = $('#mailProvidersList');
       list.innerHTML = '';
       $('#mailProvidersEmpty').classList.toggle('hidden', providers.length > 0);
       providers.forEach((p, i) => {
-        const label = p.name || p.type || `provider ${i + 1}`;
-        const hasDomainArr = Array.isArray(p.domain);
-        const domainVal = hasDomainArr ? p.domain.join(', ') : (p.default_domain != null ? p.default_domain : '');
-        const domainField = (hasDomainArr || p.default_domain != null) ? `
-            <input class="mp-domain w-full bg-bg border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent focus:outline-none"
-              placeholder="${hasDomainArr ? '多个域名用逗号分隔' : '默认域名'}" value="${escapeHtml(String(domainVal))}" />` : '';
+        const label = p.type || p.name || `provider ${i + 1}`;
+        const fields = Object.keys(p)
+          .filter((k) => !MP_SKIP_KEYS.includes(k))
+          .map((k) => mailFieldControl(k, p[k]))
+          .join('');
         const row = document.createElement('div');
         row.className = 'mail-provider border border-border/60 rounded-lg p-3';
         row.dataset.i = i;
         row.innerHTML = `
-          <div class="flex items-center justify-between gap-3 ${domainField ? 'mb-2' : ''}">
-            <span class="text-xs font-mono">${escapeHtml(label)}</span>
+          <div class="flex items-center justify-between gap-3 mb-2">
+            <span class="text-xs font-mono font-semibold">${escapeHtml(label)}</span>
             <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
               <input type="checkbox" class="mp-enable accent-blue-500" ${p.enable ? 'checked' : ''} /> 启用
             </label>
-          </div>${domainField}`;
+          </div>
+          <div class="space-y-2">${fields}</div>`;
         list.appendChild(row);
       });
     }
@@ -546,14 +570,21 @@
         const idx = parseInt(row.dataset.i, 10);
         const p = { ...original[idx] };
         p.enable = row.querySelector('.mp-enable').checked;
-        const domainEl = row.querySelector('.mp-domain');
-        if (domainEl) {
-          if (Array.isArray(p.domain)) {
-            p.domain = domainEl.value.split(',').map((s) => s.trim()).filter(Boolean);
+        row.querySelectorAll('.mp-field').forEach((el) => {
+          const key = el.dataset.key;
+          const vtype = el.dataset.vtype;
+          if (vtype === 'boolean') {
+            p[key] = el.checked;
+          } else if (vtype === 'array') {
+            p[key] = el.value.split(',').map((s) => s.trim()).filter(Boolean);
+          } else if (vtype === 'number') {
+            const raw = el.value.trim();
+            const n = Number(raw);
+            p[key] = raw === '' ? 0 : (Number.isNaN(n) ? raw : n);
           } else {
-            p.default_domain = domainEl.value.trim();
+            p[key] = el.value.trim();
           }
-        }
+        });
         return p;
       });
     }
