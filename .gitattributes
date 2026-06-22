@@ -1,0 +1,20 @@
+# Auto-detect text files, normalize to LF in repo
+* text=auto eol=lf
+
+# Force LF for shell scripts and container configs
+# (CRLF breaks sh interpreter in Linux containers)
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+Caddyfile   text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.json      text eol=lf
+
+# Binary assets
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary

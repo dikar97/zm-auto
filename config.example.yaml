@@ -1,0 +1,121 @@
+# zm-auto 配置文件示例
+# 本项目仅供学习研究，使用者需自行承担所有后果。
+#
+# 用法：
+#   cp config.example.yaml config.yaml   # 然后编辑 config.yaml
+# 优先级：config.yaml > config.yml > config.json（向后兼容旧 JSON 用户）
+# 注意：YAML 文件不会被自动回写（保留你的注释），请对照 example 补齐新字段。
+
+# ----------------------------- 邮箱服务 -----------------------------
+mail:
+  request_timeout: 30        # 创建邮箱 HTTP 超时（秒）
+  wait_timeout: 120          # 等待验证码总超时（秒）
+  wait_interval: 2           # 轮询间隔（秒）
+  user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+  providers:
+    - type: cloudflare_temp_email
+      enable: true
+      api_base: "https://your-cf-mail-worker.example.com"
+      admin_password: "your-admin-password"
+      domain:
+        - example.com
+        - mail.example.com
+    - type: gptmail
+      enable: false
+      api_key: "your-gptmail-api-key"
+      default_domain: ""
+    - type: tempmail_lol
+      enable: false
+      api_key: ""
+      domain:
+        - "*.tempmail.lol"
+    - type: duckmail
+      enable: false
+      api_key: "your-duckmail-api-key"
+      default_domain: "duckmail.sbs"
+    - type: moemail
+      enable: false
+      api_base: "https://your-moemail.example.com"
+      api_key: "your-moemail-api-key"
+      domain:
+        - example.com
+      expiry_time: 0
+    - type: inbucket
+      enable: false
+      api_base: "https://your-inbucket.example.com"
+      domain:
+        - example.com
+      random_subdomain: true
+    - type: yyds_mail
+      enable: false
+      api_base: "https://maliapi.215.im/v1"
+      api_key: "your-yyds-api-key"
+      domain:
+        - example.com
+      subdomain: ""
+      wildcard: false
+
+# ----------------------------- 代理 -----------------------------
+# 全局代理（所有 HTTP 请求共用）。空字符串表示直连。
+proxy: ""
+
+# 注册专用代理池（轮询分配给各 worker，绑定 Sub2API proxy_id）。
+# 每项 {name, proxy_url, sub2api_proxy_id}。留空列表则使用上面的全局 proxy。
+register_proxies: []
+# 示例：
+# register_proxies:
+#   - name: "node-1"
+#     proxy_url: "http://user:pass@1.2.3.4:8080"
+#     sub2api_proxy_id: 1
+
+# 批量代理池（粘贴一批原始代理，自动解析并入轮询，不绑定 Sub2API proxy_id）。
+# 支持多种格式，每行一个；# 开头或空行忽略，非法行自动跳过：
+#   host:port                         -> http://host:port
+#   host:port:user:pass               -> http://user:pass@host:port
+#   scheme://host:port                -> 原样（scheme 可为 http/https/socks4/socks5/socks5h）
+#   scheme://user:pass@host:port      -> 原样
+#   scheme://host:port:user:pass      -> scheme://user:pass@host:port
+#   [2001:db8::1]:port                -> http://[2001:db8::1]:port
+raw_proxy_pool: []
+# 示例：
+# raw_proxy_pool:
+#   - "1.2.3.4:8080"
+#   - "5.6.7.8:1080:user:pass"
+#   - "socks5://9.10.11.12:1080"
+
+# ----------------------------- 注册任务 -----------------------------
+total: 1                    # 本次注册账号数量
+threads: 1                  # 并发线程数
+api_key_name: "auto"        # API Key 名称前缀（auto 表示自动）
+
+# ----------------------------- 目标站 -----------------------------
+target_base: "https://your-target-site.com"
+target_api_version: "2026-04-20"
+
+# ----------------------------- 验证码 -----------------------------
+captcha:
+  provider: ""              # "2captcha" / "anticaptcha"；空则读 env CAPTCHA_PROVIDER
+  api_key: ""               # 空则读 env CAPTCHA_API_KEY
+
+# ----------------------------- Sub2API 导入 -----------------------------
+sub2api:
+  enabled: false
+  base_url: "http://your-sub2api-host:8082"
+  email: ""
+  password: ""
+  group_name: "auto"        # auto 表示自动命名 zm-N（启动时查最大编号）
+  concurrency: 3
+  models:
+    - "z-ai/glm-5.2-free"
+    - "moonshotai/kimi-k2.7-code-free"
+  upstream_base_url: "https://your-target-site.com/api/anthropic"
+  proxy_ids: []
+
+# ----------------------------- Telegram 通知（可选） -----------------------------
+# 注册成功/失败时推送消息。enable=false 或缺 token/chat_id 则不启用。
+tg_bot:
+  enable: false
+  token: ""
+  chat_id: ""
+  mask_email: true          # 脱敏邮箱（u**@domain）
+  mask_password: true       # 脱敏密码字段

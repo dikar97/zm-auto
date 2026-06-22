@@ -1,0 +1,16 @@
+[Unit]
+Description=zm-auto disk cleanup when disk usage is high
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+# 触发阈值：磁盘占用超过 80% 才清理
+Environment=DISK_CLEANUP_THRESHOLD_PERCENT=80
+# 检查根分区
+Environment=DISK_CLEANUP_TARGET_PATH=/
+# zm-auto 安装路径（按需修改）
+Environment=ZM_AUTO_APP_DIR=/opt/zm-auto
+# 调用清理脚本
+ExecStart=/usr/local/bin/zm-auto-disk-cleanup.sh

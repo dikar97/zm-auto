@@ -20,6 +20,9 @@ from curl_cffi import requests as curl_requests
 from mail_provider import create_mailbox, wait_for_code
 from captcha_solver import CaptchaSolver
 from sub2api_importer import Sub2APIImporter
+from utils.tg_notifier import TgNotifier
+from utils.config import find_config_file, format_docker_url, load_config_file
+from utils.proxy_pool import parse_proxy_pool
 import itertools
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -39,7 +42,22 @@ USER_AGENT = (
 
 print_lock = threading.Lock()
 stats_lock = threading.Lock()
-stats = {"done": 0, "success": 0, "fail": 0, "start_time": 0.0}
+# TG Bot 通知器（run() 开始时根据 config.tg_bot 初始化），失败/未配置时为 None。
+_tg_notifier: TgNotifier | None = None
+# 实时统计字段：done/success/fail/start_time（原有），total/active/last_error/
+# last_success_at/last_error_at/finished_at（扩展，供 Web 面板实时展示）。
+stats: dict[str, Any] = {
+    "done": 0,
+    "success": 0,
+    "fail": 0,
+    "start_time": 0.0,
+    "total": 0,                # 本次 run 的任务总数
+    "active": 0,               # 当前活跃 worker 数
+    "last_error": None,        # 最近一次失败原因
+    "last_success_at": None,   # 最近一次成功时间戳（epoch 秒）
+    "last_error_at": None,     # 最近一次失败时间戳（epoch 秒）
+    "finished_at": None,       # run 结束时间戳（epoch 秒），运行中为 None
+}
 
 # Shared proxy rotation across all workers
 # Each entry: {"name": "日本", "proxy_url": "socks5://...", "sub2api_proxy_id": 3}
@@ -76,9 +94,24 @@ def _next_zm_name() -> str:
 
 
 def _init_proxy_rotation(cfg: dict) -> None:
-    """Initialize the shared register-proxy rotation from config."""
+    """Initialize the shared register-proxy rotation from config.
+
+    合并两类代理来源（按顺序）：
+    1. ``register_proxies``: 结构化节点 {name, proxy_url, sub2api_proxy_id}
+    2. ``raw_proxy_pool``: 批量原始代理（多行字符串或列表），解析为
+       {name: "raw-N", proxy_url, sub2api_proxy_id: None}
+    两者都为空时禁用轮询（回退到全局 proxy）。
+    """
     global _register_proxy_cycle
-    proxies = list(cfg.get("register_proxies", []))
+    proxies: list[dict] = []
+    for entry in cfg.get("register_proxies", []) or []:
+        if isinstance(entry, dict) and entry.get("proxy_url"):
+            proxies.append(dict(entry))
+
+    raw_urls = parse_proxy_pool(cfg.get("raw_proxy_pool"))
+    for i, url in enumerate(raw_urls, 1):
+        proxies.append({"name": f"raw-{i}", "proxy_url": url, "sub2api_proxy_id": None})
+
     if proxies:
         _register_proxy_cycle = itertools.cycle(proxies)
     else:
@@ -97,6 +130,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "providers": [],
     },
     "proxy": "",
+    "raw_proxy_pool": [],
     "register_proxies": [
         {"name": "JP", "proxy_url": "socks5://PROXY_HOST:PORT_1", "sub2api_proxy_id": 3},
         {"name": "KR", "proxy_url": "http://PROXY_HOST:PORT_2", "sub2api_proxy_id": 1},
@@ -126,12 +160,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 
 def load_config() -> dict:
-    config = json.loads(json.dumps(DEFAULT_CONFIG))
-    if CONFIG_FILE.exists():
-        saved = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        for key in ("mail", "proxy", "register_proxies", "total", "threads", "captcha", "api_key_name", "sub2api", "target_base", "target_api_version"):
-            if key in saved:
-                config[key] = saved[key]
+    config_path = find_config_file(BASE_DIR) or CONFIG_FILE
+    config, _ = load_config_file(config_path, DEFAULT_CONFIG)
     # Override module-level constants from config
     global TARGET_BASE, API_BASE, X_API_VERSION
     if config.get("target_base"):
@@ -166,7 +196,8 @@ def step(index: int, text: str, color: str = "") -> None:
 def _make_session(proxy: str = "") -> curl_requests.Session:
     session = curl_requests.Session(impersonate="chrome")
     if proxy:
-        session.proxies = {"http": proxy, "https": proxy}
+        rewritten = format_docker_url(proxy)
+        session.proxies = {"http": rewritten, "https": rewritten}
     return session
 
 
@@ -250,10 +281,11 @@ class Registrar:
     def _test_api_key(self, api_key: str, index: int) -> bool:
         """Test the key on ZenMux anthropic endpoint with z-ai/glm-5.2-free."""
         try:
-            proxies = {}
+            proxies: dict[str, str] = {}
             proxy_url = getattr(self, "proxy", "")
             if proxy_url:
-                proxies = {"http": proxy_url, "https": proxy_url}
+                rewritten = format_docker_url(proxy_url)
+                proxies = {"http": rewritten, "https": rewritten}
             for attempt in range(2):
                 resp = curl_requests.post(
                     f"{TARGET_BASE}/api/anthropic/v1/messages",
@@ -455,28 +487,47 @@ def worker(index: int) -> dict:
     # Pass proxy info to the registrar so it can log + forward to sub2api
     registrar._proxy_name = proxy_name
     registrar._sub2api_proxy_id = sub2api_proxy_id
+    with stats_lock:
+        stats["active"] += 1
     try:
         step(index, f"任务启动" + (f"，代理: {registrar._proxy_name}" if registrar._proxy_name else ""), "cyan")
         result = registrar.register(index)
         cost = time.time() - start
+        now = time.time()
         with stats_lock:
             stats["done"] += 1
             stats["success"] += 1
-            avg = (time.time() - stats["start_time"]) / max(stats["success"], 1)
+            stats["last_success_at"] = now
+            avg = (now - stats["start_time"]) / max(stats["success"], 1)
         log(
             f'{result["email"]} 注册成功，耗时{cost:.1f}s，平均{avg:.1f}s/个，'
             f'API Key: {result["api_key"][:12]}...{result["api_key"][-4:]}',
             "green",
         )
+        if _tg_notifier:
+            _tg_notifier.send_success({
+                "email": result["email"],
+                "api_key": result["api_key"],
+                "user_id": result.get("user_id", ""),
+                "proxy_name": proxy_name,
+                "elapsed_sec": round(cost, 1),
+            })
         return {"ok": True, "index": index, "result": result}
     except Exception as e:
         cost = time.time() - start
+        now = time.time()
         with stats_lock:
             stats["done"] += 1
             stats["fail"] += 1
+            stats["last_error"] = str(e)
+            stats["last_error_at"] = now
         log(f"任务{index} 注册失败，耗时{cost:.1f}s，原因: {e}", "red")
+        if _tg_notifier:
+            _tg_notifier.send_failure(str(e), {"index": index, "proxy_name": proxy_name})
         return {"ok": False, "index": index, "error": str(e)}
     finally:
+        with stats_lock:
+            stats["active"] = max(0, stats["active"] - 1)
         registrar.close()
 
 
@@ -511,14 +562,44 @@ def _query_max_zm_number(cfg: dict) -> int:
         return 0
 
 
+def _warn_memory_pressure(threads: int) -> None:
+    try:
+        from utils.memory_predictor import get_memory_snapshot, recommend_threads
+    except ImportError:
+        return
+    snap = get_memory_snapshot()
+    if not snap:
+        return
+    rec = recommend_threads(threads, snap)
+    if rec and rec.level in ("medium", "high", "critical"):
+        log(
+            f"内存预警 {snap.percent:.0f}%（{snap.used_mb:.0f}/{snap.total_mb:.0f}MB），建议并发 {rec.suggested_threads}（当前 {threads}）",
+            "yellow",
+        )
+
+
 def run(total: int | None = None, threads: int | None = None) -> list[dict]:
     total = total if total is not None else config.get("total", 1)
     threads = threads if threads is not None else config.get("threads", 1)
     threads = max(1, min(threads, total))
 
-    stats["start_time"] = time.time()
+    # 重置 stats 全字段（含本次扩展的 total/active/last_*/finished_at）
+    with stats_lock:
+        stats["done"] = 0
+        stats["success"] = 0
+        stats["fail"] = 0
+        stats["start_time"] = time.time()
+        stats["total"] = total
+        stats["active"] = 0
+        stats["last_error"] = None
+        stats["last_success_at"] = None
+        stats["last_error_at"] = None
+        stats["finished_at"] = None
     _init_proxy_rotation(config)
     _init_zm_counter(_query_max_zm_number(config))
+    global _tg_notifier
+    _tg_notifier = TgNotifier.from_config(config)
+    _warn_memory_pressure(threads)
     proxy_count = len(config.get("register_proxies", []))
     log(f"开始注册 {total} 个账号，并发 {threads}" + (f"，IP 轮询 {proxy_count} 个节点" if proxy_count else ""), "cyan")
 
@@ -535,6 +616,8 @@ def run(total: int | None = None, threads: int | None = None) -> list[dict]:
                 results.append(future.result())
 
     elapsed = time.time() - stats["start_time"]
+    with stats_lock:
+        stats["finished_at"] = time.time()
     success = sum(1 for r in results if r.get("ok"))
     log(
         f"完成: {success}/{total} 成功，{total - success} 失败，总耗时 {elapsed:.1f}s",

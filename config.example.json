@@ -57,6 +57,7 @@
     ]
   },
   "proxy": "",
+  "raw_proxy_pool": [],
   "total": 1,
   "threads": 1,
   "headless": false,

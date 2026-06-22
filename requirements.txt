@@ -1,0 +1,10 @@
+curl_cffi
+requests
+urllib3
+fastapi
+uvicorn
+sse-starlette
+itsdangerous
+python-multipart
+PyYAML
+psutil

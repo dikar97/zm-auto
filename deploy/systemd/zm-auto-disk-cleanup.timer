@@ -1,0 +1,14 @@
+[Unit]
+Description=Run zm-auto disk cleanup periodically
+
+[Timer]
+# 启动后 10 分钟首次执行
+OnBootSec=10min
+# 之后每 30 分钟检查一次
+OnUnitActiveSec=30min
+AccuracySec=1min
+# 重启后补跑漏掉的执行（防关机错过清理）
+Persistent=true
+
+[Install]
+WantedBy=timers.target

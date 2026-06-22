@@ -164,3 +164,138 @@ class Sub2APIImporter:
         if not self._group_id:
             self.ensure_group()
         return self.import_account(api_key, name, proxy_id=proxy_id, concurrency=concurrency, priority=priority)
+
+    # ------------------------------------------------------------------ #
+    # 只读查询（账号池巡检用，纯增量不改注册流程）
+    # ------------------------------------------------------------------ #
+    def get_accounts(self, page: int = 1, page_size: int = 20) -> dict[str, Any]:
+        """分页拉取账号列表。返回内层 data（含 items / total）。"""
+        if not self._token:
+            self.login()
+        r = self._session.get(
+            f"{self.base_url}/api/v1/admin/accounts",
+            headers=self.headers,
+            params={"page": page, "page_size": page_size},
+            timeout=15,
+            verify=False,
+        )
+        data = r.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"查询账号列表失败: {data}")
+        return data.get("data") or {}
+
+    def get_all_accounts(self, page_size: int = 100) -> list[dict[str, Any]]:
+        """翻页累积全部账号。无 total 时按本页不足 page_size 判定结束。"""
+        all_items: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            payload = self.get_accounts(page=page, page_size=page_size)
+            items = payload.get("items") or []
+            if not isinstance(items, list):
+                items = []
+            all_items.extend(items)
+            total = payload.get("total")
+            if isinstance(total, int) and total >= 0:
+                if len(all_items) >= total:
+                    break
+            elif len(items) < page_size:
+                break
+            if not items:
+                break
+            page += 1
+        return all_items
+
+    def get_total_count(self) -> int:
+        """账号池总数。优先取内层 total，缺失则回退本页 items 长度。"""
+        payload = self.get_accounts(page=1, page_size=1)
+        total = payload.get("total")
+        if isinstance(total, int) and total >= 0:
+            return total
+        items = payload.get("items") or []
+        return len(items) if isinstance(items, list) else 0
+
+    def get_account_usage(self, account_id: int | str) -> dict[str, Any]:
+        """查询单个账号的用量统计。"""
+        if not self._token:
+            self.login()
+        r = self._session.get(
+            f"{self.base_url}/api/v1/admin/accounts/{account_id}/usage",
+            headers=self.headers,
+            params={"timezone": "Asia/Shanghai"},
+            timeout=15,
+            verify=False,
+        )
+        data = r.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"查询账号用量失败: {data}")
+        return data.get("data") or {}
+
+    def test_connection(self) -> bool:
+        """连通性探测：登录并拉取分组成功即视为连通。"""
+        try:
+            if not self._token:
+                self.login()
+            r = self._session.get(
+                f"{self.base_url}/api/v1/admin/groups/all",
+                headers=self.headers,
+                timeout=15,
+                verify=False,
+            )
+            data = r.json()
+            return data.get("code") == 0
+        except Exception:
+            return False
+
+    # ------------------------------------------------------------------ #
+    # 写能力（账号池维护用，中风险；delete 默认 dry-run 需显式确认）
+    # ------------------------------------------------------------------ #
+    def set_account_status(self, account_id: int | str, active: bool = True) -> dict[str, Any]:
+        """启用 / 禁用账号。active=True → status=active，False → inactive。"""
+        if not self._token:
+            self.login()
+        status = "active" if active else "inactive"
+        r = self._session.patch(
+            f"{self.base_url}/api/v1/admin/accounts/{account_id}",
+            headers=self.headers,
+            json={"status": status},
+            timeout=15,
+            verify=False,
+        )
+        data = r.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"设置账号状态失败: {data}")
+        return data.get("data") or {}
+
+    def refresh_account(self, account_id: int | str) -> dict[str, Any]:
+        """刷新账号凭证（token 救援）。"""
+        if not self._token:
+            self.login()
+        r = self._session.post(
+            f"{self.base_url}/api/v1/admin/accounts/{account_id}/refresh",
+            headers=self.headers,
+            json={},
+            timeout=15,
+            verify=False,
+        )
+        data = r.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"刷新账号失败: {data}")
+        return data.get("data") or {}
+
+    def delete_account(self, account_id: int | str, confirm: bool = False) -> dict[str, Any]:
+        """删除账号。confirm=False 时为 dry-run，不发起真实请求，仅回显将删除的目标。"""
+        if not confirm:
+            # dry-run：保护性默认，避免误删；调用方须显式传 confirm=True
+            return {"dry_run": True, "account_id": account_id, "deleted": False}
+        if not self._token:
+            self.login()
+        r = self._session.delete(
+            f"{self.base_url}/api/v1/admin/accounts/{account_id}",
+            headers=self.headers,
+            timeout=15,
+            verify=False,
+        )
+        data = r.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"删除账号失败: {data}")
+        return {"dry_run": False, "account_id": account_id, "deleted": True}

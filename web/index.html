@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>zm-auto · 自动注册管理面板</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bg: '#0b0f17',
+            panel: '#111827',
+            border: '#1f2937',
+            accent: '#3b82f6',
+            ok: '#10b981',
+            warn: '#f59e0b',
+            err: '#ef4444',
+          },
+          fontFamily: {
+            mono: ['JetBrains Mono', 'Consolas', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+    /* 自定义滚动条 */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #0b0f17; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+    /* 日志颜色 */
+    .log-line { white-space: pre-wrap; word-break: break-all; }
+    .log-red { color: #f87171; }
+    .log-green { color: #34d399; }
+    .log-yellow { color: #fbbf24; }
+    .log-cyan { color: #22d3ee; }
+    textarea { tab-size: 2; }
+  </style>
+</head>
+<body class="bg-bg text-gray-200 min-h-screen">
+  <!-- 顶部 -->
+  <header class="border-b border-border bg-panel/60 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-accent/20 border border-accent/40 flex items-center justify-center font-mono font-bold text-accent">zm</div>
+        <div>
+          <h1 class="text-lg font-semibold leading-tight">自动注册管理面板</h1>
+          <p class="text-xs text-gray-500 leading-tight">HTTP + 2captcha · 本地工具</p>
+        </div>
+      </div>
+      <!-- 状态徽章 -->
+      <div id="statusBadge" class="flex items-center gap-2 text-sm">
+        <span class="w-2 h-2 rounded-full bg-gray-500"></span>
+        <span class="text-gray-400">空闲</span>
+      </div>
+    </div>
+    <!-- Tabs -->
+    <nav class="max-w-7xl mx-auto px-4 flex gap-1">
+      <button data-tab="run" class="tab-btn px-4 py-2 text-sm border-b-2 border-accent text-white">运行</button>
+      <button data-tab="config" class="tab-btn px-4 py-2 text-sm border-b-2 border-transparent text-gray-400 hover:text-white">配置</button>
+      <button data-tab="accounts" class="tab-btn px-4 py-2 text-sm border-b-2 border-transparent text-gray-400 hover:text-white">账号 (<span id="accountCount">0</span>)</button>
+    </nav>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-6 pb-32">
+    <!-- ====================== 运行 Tab ====================== -->
+    <section id="tab-run" class="tab-panel">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        <!-- 启动卡片 -->
+        <div class="bg-panel border border-border rounded-xl p-5 lg:col-span-2">
+          <h2 class="text-base font-semibold mb-4">启动注册任务</h2>
+          <div class="grid grid-cols-2 gap-4">
+            <label class="block">
+              <span class="text-xs text-gray-400">注册数量 (total)</span>
+              <input id="inputTotal" type="number" min="1" max="500" value="1"
+                class="mt-1 w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none" />
+            </label>
+            <label class="block">
+              <span class="text-xs text-gray-400">并发线程 (threads)</span>
+              <input id="inputThreads" type="number" min="1" max="20" value="1"
+                class="mt-1 w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none" />
+            </label>
+          </div>
+          <div class="flex items-center gap-3 mt-5">
+            <button id="btnStart"
+              class="px-5 py-2 bg-accent hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-white text-sm font-medium transition">
+              ▶ 启动
+            </button>
+            <span id="runHint" class="text-xs text-gray-500"></span>
+          </div>
+        </div>
+        <!-- 统计卡片 -->
+        <div class="bg-panel border border-border rounded-xl p-5">
+          <h2 class="text-base font-semibold mb-4">实时统计</h2>
+          <div class="grid grid-cols-4 gap-3 text-center">
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statDone" class="text-2xl font-mono font-bold text-white">0</div>
+              <div class="text-xs text-gray-500 mt-1">已完成</div>
+            </div>
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statSuccess" class="text-2xl font-mono font-bold text-ok">0</div>
+              <div class="text-xs text-gray-500 mt-1">成功</div>
+            </div>
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statFail" class="text-2xl font-mono font-bold text-err">0</div>
+              <div class="text-xs text-gray-500 mt-1">失败</div>
+            </div>
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statActive" class="text-2xl font-mono font-bold text-cyan">0</div>
+              <div class="text-xs text-gray-500 mt-1">活跃</div>
+            </div>
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statRate" class="text-2xl font-mono font-bold text-ok">—</div>
+              <div class="text-xs text-gray-500 mt-1">成功率</div>
+            </div>
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statAvg" class="text-2xl font-mono font-bold text-cyan">—</div>
+              <div class="text-xs text-gray-500 mt-1">平均秒/个</div>
+            </div>
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statElapsed" class="text-2xl font-mono font-bold text-white">—</div>
+              <div class="text-xs text-gray-500 mt-1">用时</div>
+            </div>
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statTotal" class="text-2xl font-mono font-bold text-gray-300">0</div>
+              <div class="text-xs text-gray-500 mt-1">总数</div>
+            </div>
+          </div>
+          <div id="lastErrorBox" class="mt-3 hidden text-xs text-err bg-err/10 border border-err/30 rounded-lg p-2">
+            <span class="font-semibold">最近错误：</span><span id="lastErrorText"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 进度条 -->
+      <div class="bg-panel border border-border rounded-xl p-5 mb-6">
+        <div class="flex items-center justify-between text-xs text-gray-400 mb-2">
+          <span>进度</span>
+          <span id="progressText">0 / 0</span>
+        </div>
+        <div class="h-2 bg-bg rounded-full overflow-hidden">
+          <div id="progressBar" class="h-full bg-accent transition-all duration-300" style="width: 0%"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================== 配置 Tab ====================== -->
+    <section id="tab-config" class="tab-panel hidden">
+      <div class="bg-panel border border-border rounded-xl p-5">
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <div>
+            <h2 class="text-base font-semibold">配置</h2>
+            <p class="text-xs text-gray-500 mt-1">
+              保存后立即热加载到注册脚本。字段说明见
+              <code class="text-accent">config.example.json</code> 与 README。
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <!-- 模式切换 -->
+            <div class="flex rounded-lg border border-border overflow-hidden text-xs">
+              <button id="modeForm" class="px-3 py-1.5 bg-accent text-white">表单</button>
+              <button id="modeJson" class="px-3 py-1.5 bg-bg text-gray-400 hover:text-white">JSON</button>
+            </div>
+            <button id="btnFormat" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg hidden">格式化</button>
+            <button id="btnReload" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg">重新加载</button>
+            <button id="btnSave" class="px-4 py-1.5 text-xs bg-accent hover:bg-blue-500 text-white rounded-lg font-medium">保存</button>
+          </div>
+        </div>
+
+        <!-- ---------- 表单模式 ---------- -->
+        <div id="configForm" class="space-y-5">
+          <!-- 代理设置 -->
+          <div class="border border-border rounded-lg p-4">
+            <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
+              <span class="text-accent">●</span> 代理设置
+            </h3>
+            <label class="block mb-4">
+              <span class="text-xs text-gray-400">全局代理（留空=直连，单个代理 URL）</span>
+              <input id="fGlobalProxy" type="text" placeholder="http://127.0.0.1:7890"
+                class="mt-1 w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none" />
+            </label>
+
+            <!-- 批量代理池 -->
+            <label class="block mb-4">
+              <span class="text-xs text-gray-400">批量代理池 raw_proxy_pool（每行一个，轮询分配给各 worker）</span>
+              <textarea id="fRawProxyPool" rows="5" spellcheck="false" placeholder="1.2.3.4:8080&#10;1.2.3.4:8080:user:pass&#10;socks5://5.6.7.8:1080&#10;http://user:pass@host:port"
+                class="mt-1 w-full bg-bg border border-border rounded-lg px-3 py-2 text-xs font-mono leading-relaxed focus:border-accent focus:outline-none"></textarea>
+              <span class="text-[11px] text-gray-600">支持 host:port / host:port:user:pass / scheme://… / scheme://user:pass@host:port，注释行(#)与非法行自动忽略</span>
+            </label>
+
+            <!-- 订阅导入 -->
+            <div class="mb-4">
+              <span class="text-xs text-gray-400">从订阅导入（仅提取 http/socks 节点，vmess/ss/trojan 等会跳过）</span>
+              <div class="flex gap-2 mt-1">
+                <input id="fSubUrl" type="text" spellcheck="false" placeholder="订阅链接 URL，或留空直接在上方批量代理池粘贴 Clash/base64 内容"
+                  class="flex-1 bg-bg border border-border rounded-lg px-3 py-2 text-xs font-mono focus:border-accent focus:outline-none" />
+                <button id="btnImportSub" class="text-xs px-3 py-2 bg-bg border border-border hover:border-accent rounded whitespace-nowrap">从订阅导入</button>
+              </div>
+              <span id="subImportStatus" class="text-[11px] text-gray-600"></span>
+            </div>
+
+            <!-- 结构化代理节点 -->
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs text-gray-400">代理节点 register_proxies（可绑定 Sub2API proxy_id）</span>
+                <button id="btnAddProxyNode" class="text-xs px-2 py-1 bg-bg border border-border hover:border-accent rounded">+ 添加节点</button>
+              </div>
+              <div id="proxyNodesList" class="space-y-2"></div>
+              <p id="proxyNodesEmpty" class="text-xs text-gray-600 py-2 hidden">暂无结构化节点，可点击「添加节点」或使用上方批量代理池。</p>
+            </div>
+          </div>
+
+          <!-- 邮箱 providers -->
+          <div class="border border-border rounded-lg p-4">
+            <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
+              <span class="text-accent">●</span> 邮箱 Provider
+            </h3>
+            <div id="mailProvidersList" class="space-y-3"></div>
+            <p id="mailProvidersEmpty" class="text-xs text-gray-600 py-2 hidden">config 中无 mail.providers 字段。</p>
+          </div>
+        </div>
+
+        <!-- ---------- JSON 模式 ---------- -->
+        <textarea id="configEditor" spellcheck="false"
+          class="w-full h-[60vh] bg-bg border border-border rounded-lg p-4 font-mono text-sm leading-relaxed focus:border-accent focus:outline-none hidden"></textarea>
+
+        <div id="configMsg" class="text-xs mt-3 h-4"></div>
+      </div>
+    </section>
+
+    <!-- ====================== 账号 Tab ====================== -->
+    <section id="tab-accounts" class="tab-panel hidden">
+      <div class="bg-panel border border-border rounded-xl p-5">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div class="flex items-center gap-3">
+            <h2 class="text-base font-semibold">已注册账号 (<span id="accountCount2">0</span>)</h2>
+            <span id="selectedHint" class="text-xs text-gray-500 hidden">已选 <span id="selectedCount">0</span></span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <input id="searchInput" type="search" placeholder="搜索邮箱/ID/Key..."
+              class="px-3 py-1.5 text-xs bg-bg border border-border rounded-lg focus:border-accent focus:outline-none w-56" />
+            <button id="btnExportSelected" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg hidden">导出选中</button>
+            <button id="btnExportJson" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg">导出 JSON</button>
+            <button id="btnExportCsv" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg">导出 CSV</button>
+            <button id="btnCopyAll" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg">复制全部 Key</button>
+            <button id="btnDeleteSelected" class="px-3 py-1.5 text-xs bg-bg border border-err/40 text-err hover:bg-err/10 rounded-lg hidden">删除选中</button>
+            <button id="btnClear" class="px-3 py-1.5 text-xs bg-bg border border-err/40 text-err hover:bg-err/10 rounded-lg">清空</button>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="text-xs text-gray-500 border-b border-border">
+              <tr>
+                <th class="text-left py-2 px-3 font-medium w-10">
+                  <input id="selectAll" type="checkbox" class="accent-blue-500" />
+                </th>
+                <th class="text-left py-2 px-3 font-medium">邮箱</th>
+                <th class="text-left py-2 px-3 font-medium">User ID</th>
+                <th class="text-left py-2 px-3 font-medium">API Key</th>
+                <th class="text-left py-2 px-3 font-medium">Sub2API ID</th>
+                <th class="text-left py-2 px-3 font-medium">创建时间</th>
+                <th class="text-right py-2 px-3 font-medium">操作</th>
+              </tr>
+            </thead>
+            <tbody id="accountsBody" class="divide-y divide-border"></tbody>
+          </table>
+        </div>
+        <div id="accountsEmpty" class="text-center text-gray-500 text-sm py-12 hidden">
+          暂无账号，去"运行" Tab 启动第一个任务
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ====================== 底部日志抽屉 ====================== -->
+  <div id="logDrawer" class="fixed bottom-0 left-0 right-0 bg-panel border-t border-border shadow-2xl z-30 transition-transform">
+    <!-- header -->
+    <div class="flex items-center justify-between px-4 py-2 border-b border-border cursor-pointer select-none" id="logHeader">
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-medium">实时日志</span>
+        <span id="logCount" class="text-xs text-gray-500 font-mono">0 行</span>
+        <span id="sseStatus" class="text-xs px-2 py-0.5 rounded bg-gray-700 text-gray-300">未连接</span>
+      </div>
+      <div class="flex items-center gap-2" onclick="event.stopPropagation()">
+        <label class="flex items-center gap-1 text-xs text-gray-400 cursor-pointer">
+          <input id="autoscroll" type="checkbox" checked class="accent-blue-500" /> 自动滚动
+        </label>
+        <button id="btnClearLog" class="text-xs px-2 py-1 hover:bg-bg rounded">清屏</button>
+        <button id="btnToggleLog" class="text-xs px-2 py-1 hover:bg-bg rounded">收起 ▾</button>
+      </div>
+    </div>
+    <!-- content -->
+    <div id="logBody" class="h-48 overflow-y-auto p-3 font-mono text-xs leading-relaxed"></div>
+  </div>
+
+  <script>
+    // ======================================================================== //
+    // 工具
+    // ======================================================================== //
+    const $ = (s) => document.querySelector(s);
+    const $$ = (s) => document.querySelectorAll(s);
+    const api = (path, opts = {}) => fetch(path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...opts,
+    }).then(async (r) => {
+      const txt = await r.text();
+      let data; try { data = txt ? JSON.parse(txt) : {}; } catch { data = txt; }
+      if (!r.ok) throw new Error((data && data.detail) || `HTTP ${r.status}`);
+      return data;
+    });
+
+    // ======================================================================== //
+    // Tab 切换
+    // ======================================================================== //
+    $$('.tab-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        $$('.tab-btn').forEach((b) => {
+          b.classList.toggle('border-accent', b === btn);
+          b.classList.toggle('text-white', b === btn);
+          b.classList.toggle('border-transparent', b !== btn);
+          b.classList.toggle('text-gray-400', b !== btn);
+        });
+        $$('.tab-panel').forEach((p) => p.classList.add('hidden'));
+        $(`#tab-${tab}`).classList.remove('hidden');
+        if (tab === 'accounts') loadAccounts();
+        if (tab === 'config') loadConfig();
+      });
+    });
+
+    // ======================================================================== //
+    // 状态轮询
+    // ======================================================================== //
+    let prevStatus = null;
+    async function pollStatus() {
+      try {
+        const s = await api('/api/status');
+        const t = s.task, st = s.stats;
+        // 徽章
+        const badge = $('#statusBadge');
+        const colors = {
+          idle: ['bg-gray-500', '空闲'],
+          running: ['bg-ok animate-pulse', '运行中'],
+          done: ['bg-accent', '已完成'],
+          error: ['bg-err', '出错'],
+        };
+        const [dotCls, label] = colors[t.status] || colors.idle;
+        badge.innerHTML = `<span class="w-2 h-2 rounded-full ${dotCls}"></span><span class="text-gray-300">${label}</span>`;
+
+        // 统计
+        $('#statDone').textContent = st.done || 0;
+        $('#statSuccess').textContent = st.success || 0;
+        $('#statFail').textContent = st.fail || 0;
+        $('#statActive').textContent = st.active || 0;
+        $('#statTotal').textContent = st.total || t.total || 0;
+        const avg = st.success > 0 && st.start_time ? ((Date.now() / 1000) - st.start_time) / st.success : null;
+        $('#statAvg').textContent = avg != null ? avg.toFixed(1) : '—';
+        const rateDenom = (st.done || 0);
+        const rate = rateDenom > 0 ? ((st.success || 0) / rateDenom * 100) : null;
+        $('#statRate').textContent = rate != null ? rate.toFixed(0) + '%' : '—';
+        // 已用时：运行中显示 now-start，结束显示 finished-start
+        let elapsedSec = null;
+        if (st.start_time) {
+          const end = st.finished_at || (Date.now() / 1000);
+          elapsedSec = end - st.start_time;
+        }
+        $('#statElapsed').textContent = elapsedSec != null && elapsedSec >= 0 ? formatDuration(elapsedSec) : '—';
+        // 最近错误
+        const lastErrBox = $('#lastErrorBox');
+        if (st.last_error) {
+          $('#lastErrorText').textContent = st.last_error;
+          lastErrBox.classList.remove('hidden');
+        } else {
+          lastErrBox.classList.add('hidden');
+        }
+
+        // 进度
+        const total = t.total || st.done || 0;
+        const done = st.done || 0;
+        const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
+        $('#progressBar').style.width = pct + '%';
+        $('#progressText').textContent = `${done} / ${total}`;
+
+        // 按钮态
+        const running = t.status === 'running';
+        $('#btnStart').disabled = running;
+        $('#btnStart').textContent = running ? '运行中…' : '▶ 启动';
+        $('#runHint').textContent = running ? `任务进行中 (${done}/${total})` : '';
+
+        // 任务结束时刷新账号
+        if (prevStatus === 'running' && t.status !== 'running') {
+          loadAccounts();
+          if (!$('#tab-accounts').classList.contains('hidden')) {}
+        }
+        prevStatus = t.status;
+
+        // 出错弹 toast
+        if (t.status === 'error' && t.error) {
+          $('#runHint').textContent = '错误：' + t.error;
+        }
+      } catch (e) {
+        console.warn('poll failed', e);
+      }
+    }
+    setInterval(pollStatus, 2000);
+    pollStatus();
+
+    // ======================================================================== //
+    // 启动任务
+    // ======================================================================== //
+    $('#btnStart').addEventListener('click', async () => {
+      const total = parseInt($('#inputTotal').value, 10);
+      const threads = parseInt($('#inputThreads').value, 10);
+      if (!total || total < 1) return alert('total 不合法');
+      try {
+        await api('/api/run', {
+          method: 'POST',
+          body: JSON.stringify({ total, threads }),
+        });
+        $('#runHint').textContent = '任务已启动…';
+        setTimeout(pollStatus, 200);
+      } catch (e) {
+        alert('启动失败：' + e.message);
+      }
+    });
+
+    // ======================================================================== //
+    // 配置编辑（currentConfig 为全量配置单一数据源，表单只读写其中部分字段）
+    // ======================================================================== //
+    let currentConfig = {};
+    let configMode = 'form';
+
+    async function loadConfig() {
+      try {
+        currentConfig = await api('/api/config') || {};
+        renderConfigForm();
+        $('#configEditor').value = JSON.stringify(currentConfig, null, 2);
+        $('#configMsg').textContent = '';
+      } catch (e) {
+        $('#configMsg').innerHTML = `<span class="text-err">加载失败：${e.message}</span>`;
+      }
+    }
+
+    function renderConfigForm() {
+      $('#fGlobalProxy').value = currentConfig.proxy || '';
+      const pool = currentConfig.raw_proxy_pool;
+      $('#fRawProxyPool').value = Array.isArray(pool) ? pool.join('\n') : (pool || '');
+      renderProxyNodes(currentConfig.register_proxies || []);
+      renderMailProviders((currentConfig.mail && currentConfig.mail.providers) || []);
+    }
+
+    function renderProxyNodes(nodes) {
+      const list = $('#proxyNodesList');
+      list.innerHTML = '';
+      $('#proxyNodesEmpty').classList.toggle('hidden', nodes.length > 0);
+      nodes.forEach((n, i) => {
+        const row = document.createElement('div');
+        row.className = 'proxy-node grid grid-cols-12 gap-2 items-center';
+        row.innerHTML = `
+          <input class="pn-name col-span-3 bg-bg border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent focus:outline-none" placeholder="名称" value="${escapeHtml(n.name || '')}" />
+          <input class="pn-url col-span-5 bg-bg border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent focus:outline-none" placeholder="http://host:port" value="${escapeHtml(n.proxy_url || '')}" />
+          <input class="pn-sid col-span-3 bg-bg border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent focus:outline-none" placeholder="Sub2API proxy_id" value="${n.sub2api_proxy_id != null ? escapeHtml(String(n.sub2api_proxy_id)) : ''}" />
+          <button class="pn-del col-span-1 text-xs text-err hover:bg-err/10 rounded py-1.5" data-i="${i}">✕</button>`;
+        list.appendChild(row);
+      });
+      list.querySelectorAll('.pn-del').forEach((b) => {
+        b.addEventListener('click', () => { b.closest('.proxy-node').remove(); refreshProxyNodesEmpty(); });
+      });
+    }
+    function refreshProxyNodesEmpty() {
+      $('#proxyNodesEmpty').classList.toggle('hidden', $('#proxyNodesList').children.length > 0);
+    }
+    $('#btnAddProxyNode').addEventListener('click', () => {
+      const nodes = collectProxyNodes();
+      nodes.push({ name: '', proxy_url: '', sub2api_proxy_id: null });
+      renderProxyNodes(nodes);
+    });
+    function collectProxyNodes() {
+      return Array.from($('#proxyNodesList').querySelectorAll('.proxy-node')).map((row) => {
+        const sid = row.querySelector('.pn-sid').value.trim();
+        const node = {
+          name: row.querySelector('.pn-name').value.trim(),
+          proxy_url: row.querySelector('.pn-url').value.trim(),
+          sub2api_proxy_id: sid === '' ? null : (Number.isNaN(Number(sid)) ? sid : Number(sid)),
+        };
+        return node;
+      });
+    }
+    $('#btnImportSub').addEventListener('click', async () => {
+      const url = $('#fSubUrl').value.trim();
+      const status = $('#subImportStatus');
+      const ta = $('#fRawProxyPool');
+      status.textContent = '导入中…';
+      status.className = 'text-[11px] text-gray-400';
+      try {
+        const body = url ? { url } : { content: ta.value };
+        const data = await api('/api/subscription/convert', { method: 'POST', body: JSON.stringify(body) });
+        const incoming = (data.text || '').split('\n').filter(Boolean);
+        if (url) {
+          const existing = ta.value.split('\n').map((l) => l.trim()).filter(Boolean);
+          ta.value = Array.from(new Set([...existing, ...incoming])).join('\n');
+        } else {
+          ta.value = incoming.join('\n');
+        }
+        const skippedStr = Object.entries(data.skipped || {}).map(([k, v]) => `${k}×${v}`).join(' ');
+        status.textContent = `导入 ${incoming.length} 个节点${skippedStr ? `，跳过 ${skippedStr}` : ''}`;
+        status.className = 'text-[11px] text-ok';
+      } catch (e) {
+        status.textContent = `导入失败：${e.message}`;
+        status.className = 'text-[11px] text-err';
+      }
+    });
+
+    // 不在表单展开的内部字段（type 作卡片标题、enable 单独渲染、provider_ref 是运行时内部字段）
+    const MP_SKIP_KEYS = ['type', 'enable', 'provider_ref'];
+    function mailFieldControl(key, value) {
+      const vtype = Array.isArray(value) ? 'array' : (value === null ? 'string' : typeof value);
+      if (vtype === 'boolean') {
+        return `
+          <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+            <input type="checkbox" class="mp-field accent-blue-500" data-key="${escapeHtml(key)}" data-vtype="boolean" ${value ? 'checked' : ''} />
+            ${escapeHtml(key)}
+          </label>`;
+      }
+      let inputVal;
+      let placeholder = key;
+      if (vtype === 'array') { inputVal = value.join(', '); placeholder = '多个值用逗号分隔'; }
+      else if (vtype === 'number') { inputVal = String(value); placeholder = '数字'; }
+      else { inputVal = value == null ? '' : String(value); }
+      const inputType = vtype === 'number' ? 'number' : 'text';
+      return `
+        <div>
+          <label class="block text-[11px] text-gray-500 mb-0.5">${escapeHtml(key)}</label>
+          <input type="${inputType}" class="mp-field w-full bg-bg border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent focus:outline-none"
+            data-key="${escapeHtml(key)}" data-vtype="${vtype}" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(inputVal)}" />
+        </div>`;
+    }
+    function renderMailProviders(providers) {
+      const list = $('#mailProvidersList');
+      list.innerHTML = '';
+      $('#mailProvidersEmpty').classList.toggle('hidden', providers.length > 0);
+      providers.forEach((p, i) => {
+        const label = p.type || p.name || `provider ${i + 1}`;
+        const fields = Object.keys(p)
+          .filter((k) => !MP_SKIP_KEYS.includes(k))
+          .map((k) => mailFieldControl(k, p[k]))
+          .join('');
+        const row = document.createElement('div');
+        row.className = 'mail-provider border border-border/60 rounded-lg p-3';
+        row.dataset.i = i;
+        row.innerHTML = `
+          <div class="flex items-center justify-between gap-3 mb-2">
+            <span class="text-xs font-mono font-semibold">${escapeHtml(label)}</span>
+            <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+              <input type="checkbox" class="mp-enable accent-blue-500" ${p.enable ? 'checked' : ''} /> 启用
+            </label>
+          </div>
+          <div class="space-y-2">${fields}</div>`;
+        list.appendChild(row);
+      });
+    }
+    function collectMailProviders() {
+      const original = (currentConfig.mail && currentConfig.mail.providers) || [];
+      return Array.from($('#mailProvidersList').querySelectorAll('.mail-provider')).map((row) => {
+        const idx = parseInt(row.dataset.i, 10);
+        const p = { ...original[idx] };
+        p.enable = row.querySelector('.mp-enable').checked;
+        row.querySelectorAll('.mp-field').forEach((el) => {
+          const key = el.dataset.key;
+          const vtype = el.dataset.vtype;
+          if (vtype === 'boolean') {
+            p[key] = el.checked;
+          } else if (vtype === 'array') {
+            p[key] = el.value.split(',').map((s) => s.trim()).filter(Boolean);
+          } else if (vtype === 'number') {
+            const raw = el.value.trim();
+            const n = Number(raw);
+            p[key] = raw === '' ? 0 : (Number.isNaN(n) ? raw : n);
+          } else {
+            p[key] = el.value.trim();
+          }
+        });
+        return p;
+      });
+    }
+
+    function collectForm() {
+      currentConfig.proxy = $('#fGlobalProxy').value.trim();
+      currentConfig.raw_proxy_pool = $('#fRawProxyPool').value
+        .split('\n').map((s) => s.trim()).filter(Boolean);
+      currentConfig.register_proxies = collectProxyNodes();
+      if (currentConfig.mail && Array.isArray(currentConfig.mail.providers)) {
+        currentConfig.mail.providers = collectMailProviders();
+      }
+    }
+
+    function switchMode(mode) {
+      if (mode === configMode) return;
+      if (mode === 'json') {
+        collectForm();
+        $('#configEditor').value = JSON.stringify(currentConfig, null, 2);
+      } else {
+        try {
+          currentConfig = JSON.parse($('#configEditor').value);
+        } catch (e) {
+          $('#configMsg').innerHTML = `<span class="text-err">JSON 解析失败，无法切回表单：${e.message}</span>`;
+          return;
+        }
+        renderConfigForm();
+      }
+      configMode = mode;
+      $('#configForm').classList.toggle('hidden', mode !== 'form');
+      $('#configEditor').classList.toggle('hidden', mode !== 'json');
+      $('#btnFormat').classList.toggle('hidden', mode !== 'json');
+      $('#modeForm').className = mode === 'form' ? 'px-3 py-1.5 bg-accent text-white' : 'px-3 py-1.5 bg-bg text-gray-400 hover:text-white';
+      $('#modeJson').className = mode === 'json' ? 'px-3 py-1.5 bg-accent text-white' : 'px-3 py-1.5 bg-bg text-gray-400 hover:text-white';
+      $('#configMsg').textContent = '';
+    }
+    $('#modeForm').addEventListener('click', () => switchMode('form'));
+    $('#modeJson').addEventListener('click', () => switchMode('json'));
+
+    $('#btnSave').addEventListener('click', async () => {
+      try {
+        if (configMode === 'json') {
+          currentConfig = JSON.parse($('#configEditor').value);
+        } else {
+          collectForm();
+        }
+        await api('/api/config', { method: 'PUT', body: JSON.stringify(currentConfig) });
+        $('#configEditor').value = JSON.stringify(currentConfig, null, 2);
+        $('#configMsg').innerHTML = `<span class="text-ok">✓ 已保存并热加载</span>`;
+      } catch (e) {
+        $('#configMsg').innerHTML = `<span class="text-err">保存失败：${e.message}</span>`;
+      }
+    });
+    $('#btnFormat').addEventListener('click', () => {
+      try {
+        const obj = JSON.parse($('#configEditor').value);
+        $('#configEditor').value = JSON.stringify(obj, null, 2);
+        $('#configMsg').innerHTML = `<span class="text-ok">✓ 格式化完成</span>`;
+      } catch (e) {
+        $('#configMsg').innerHTML = `<span class="text-err">JSON 解析失败：${e.message}</span>`;
+      }
+    });
+    $('#btnReload').addEventListener('click', loadConfig);
+
+    // ======================================================================== //
+    // 账号列表（搜索过滤 + 批量删除/导出）
+    // ======================================================================== //
+    let accountsList = [];
+    async function loadAccounts() {
+      try {
+        accountsList = await api('/api/accounts');
+        renderAccounts();
+      } catch (e) {
+        console.error('loadAccounts failed', e);
+      }
+    }
+    function renderAccounts() {
+      const body = $('#accountsBody');
+      const q = $('#searchInput').value.trim().toLowerCase();
+      const filtered = [];
+      for (let i = 0; i < accountsList.length; i++) {
+        const a = accountsList[i];
+        if (q) {
+          const hay = ((a.email || '') + ' ' + (a.user_id || '') + ' ' + (a.api_key || '')).toLowerCase();
+          if (!hay.includes(q)) continue;
+        }
+        filtered.push({ data: a, idx: i });
+      }
+      body.innerHTML = '';
+      const total = accountsList.length;
+      const shown = filtered.length;
+      $('#accountCount').textContent = total;
+      $('#accountCount2').textContent = shown === total ? String(total) : `${shown}/${total}`;
+      $('#accountsEmpty').classList.toggle('hidden', total > 0);
+      for (const item of filtered) {
+        const a = item.data;
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-bg/40';
+        const key = a.api_key || '';
+        const maskedKey = key ? `${key.slice(0, 10)}…${key.slice(-4)}` : '—';
+        tr.innerHTML = `
+          <td class="py-2 px-3"><input type="checkbox" class="accent-blue-500 row-check" data-idx="${item.idx}" /></td>
+          <td class="py-2 px-3 font-mono text-xs">${escapeHtml(a.email || '')}</td>
+          <td class="py-2 px-3 font-mono text-xs text-gray-400">${escapeHtml(a.user_id || '—')}</td>
+          <td class="py-2 px-3 font-mono text-xs">
+            <span class="text-accent">${escapeHtml(maskedKey)}</span>
+          </td>
+          <td class="py-2 px-3 font-mono text-xs">${a.sub2api_id != null ? a.sub2api_id : '—'}</td>
+          <td class="py-2 px-3 text-xs text-gray-400">${formatTime(a.created_at)}</td>
+          <td class="py-2 px-3 text-right">
+            <button class="text-xs px-2 py-1 hover:bg-bg rounded copy-key" data-key="${escapeHtml(key)}">复制</button>
+          </td>`;
+        body.appendChild(tr);
+      }
+      body.querySelectorAll('.copy-key').forEach((b) => {
+        b.addEventListener('click', () => {
+          navigator.clipboard.writeText(b.dataset.key);
+          b.textContent = '✓';
+          setTimeout(() => (b.textContent = '复制'), 1000);
+        });
+      });
+      $('#selectAll').checked = false;
+      updateSelectionUI();
+    }
+    function updateSelectionUI() {
+      const checks = document.querySelectorAll('.row-check');
+      const checked = document.querySelectorAll('.row-check:checked');
+      const hasSel = checked.length > 0;
+      $('#selectedHint').classList.toggle('hidden', !hasSel);
+      $('#btnDeleteSelected').classList.toggle('hidden', !hasSel);
+      $('#btnExportSelected').classList.toggle('hidden', !hasSel);
+      if (hasSel) $('#selectedCount').textContent = checked.length;
+      $('#selectAll').checked = checks.length > 0 && checked.length === checks.length;
+    }
+    $('#selectAll').addEventListener('change', (e) => {
+      document.querySelectorAll('.row-check').forEach((c) => { c.checked = e.target.checked; });
+      updateSelectionUI();
+    });
+    $('#accountsBody').addEventListener('change', (e) => {
+      if (e.target.classList.contains('row-check')) updateSelectionUI();
+    });
+    $('#searchInput').addEventListener('input', renderAccounts);
+
+    $('#btnDeleteSelected').addEventListener('click', async () => {
+      const indices = Array.from(document.querySelectorAll('.row-check:checked')).map((c) => parseInt(c.dataset.idx, 10));
+      if (!indices.length) return;
+      if (!confirm(`确定删除选中的 ${indices.length} 个账号？此操作不可恢复（已导入 Sub2API 的不会被撤回）。`)) return;
+      try {
+        const r = await api('/api/accounts/delete', { method: 'POST', body: JSON.stringify({ indices }) });
+        await loadAccounts();
+        alert(`已删除 ${r.removed} 个账号，剩余 ${r.remaining} 个`);
+      } catch (e) {
+        alert('删除失败：' + e.message);
+      }
+    });
+    $('#btnExportSelected').addEventListener('click', () => {
+      const indices = Array.from(document.querySelectorAll('.row-check:checked')).map((c) => c.dataset.idx).join(',');
+      if (!indices) return;
+      window.location.href = `/api/accounts/export?format=json&indices=${encodeURIComponent(indices)}`;
+    });
+    $('#btnExportJson').addEventListener('click', () => {
+      window.location.href = '/api/accounts/export?format=json';
+    });
+    $('#btnExportCsv').addEventListener('click', () => {
+      window.location.href = '/api/accounts/export?format=csv';
+    });
+    $('#btnCopyAll').addEventListener('click', async () => {
+      const keys = accountsList.map((x) => x.api_key).filter(Boolean).join('\n');
+      navigator.clipboard.writeText(keys);
+      alert(`已复制 ${accountsList.length} 个 Key`);
+    });
+    $('#btnClear').addEventListener('click', async () => {
+      if (!confirm('确定清空 accounts.json？已导入 Sub2API 的账号不会被撤回。')) return;
+      await api('/api/accounts', { method: 'DELETE' });
+      loadAccounts();
+    });
+
+    // ======================================================================== //
+    // SSE 日志流
+    // ======================================================================== //
+    let logLines = 0;
+    function connectSSE() {
+      const es = new EventSource('/api/logs');
+      $('#sseStatus').textContent = '连接中…';
+      es.addEventListener('open', () => {
+        $('#sseStatus').textContent = '已连接';
+        $('#sseStatus').className = 'text-xs px-2 py-0.5 rounded bg-ok/20 text-ok';
+      });
+      es.addEventListener('log', (e) => {
+        let payload;
+        try { payload = JSON.parse(e.data); } catch { payload = { text: e.data }; }
+        appendLog(payload);
+      });
+      es.addEventListener('error', () => {
+        $('#sseStatus').textContent = '重连中…';
+        $('#sseStatus').className = 'text-xs px-2 py-0.5 rounded bg-err/20 text-err';
+      });
+    }
+    function appendLog({ ts, text, color }) {
+      const body = $('#logBody');
+      const div = document.createElement('div');
+      div.className = 'log-line';
+      const colorCls = { red: 'log-red', green: 'log-green', yellow: 'log-yellow', cyan: 'log-cyan' }[color] || '';
+      div.innerHTML = `<span class="text-gray-600">${ts || ''}</span> <span class="${colorCls}">${escapeHtml(text || '')}</span>`;
+      body.appendChild(div);
+      logLines++;
+      $('#logCount').textContent = logLines + ' 行';
+      // 限制 DOM 节点数（防内存爆炸）
+      if (body.children.length > 2000) body.removeChild(body.firstChild);
+      if ($('#autoscroll').checked) body.scrollTop = body.scrollHeight;
+    }
+    $('#btnClearLog').addEventListener('click', () => {
+      $('#logBody').innerHTML = '';
+      logLines = 0;
+      $('#logCount').textContent = '0 行';
+    });
+
+    // 日志抽屉折叠
+    let logCollapsed = false;
+    $('#logHeader').addEventListener('click', () => {
+      logCollapsed = !logCollapsed;
+      $('#logBody').style.display = logCollapsed ? 'none' : '';
+      $('#btnToggleLog').textContent = logCollapsed ? '展开 ▴' : '收起 ▾';
+    });
+
+    // ======================================================================== //
+    // 小工具
+    // ======================================================================== //
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function formatTime(iso) {
+      if (!iso) return '—';
+      try {
+        const d = new Date(iso);
+        return d.toLocaleString('zh-CN', { hour12: false });
+      } catch { return iso; }
+    }
+    // 秒数转可读时长：<60s 显示 "Xs"，<3600s 显示 "Xm Ys"，否则 "Xh Ym"
+    function formatDuration(sec) {
+      if (sec == null || isNaN(sec) || sec < 0) return '—';
+      sec = Math.floor(sec);
+      if (sec < 60) return sec + 's';
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      if (sec < 3600) return m + 'm ' + s + 's';
+      const h = Math.floor(m / 60);
+      const mm = m % 60;
+      return h + 'h ' + mm + 'm';
+    }
+
+    // ======================================================================== //
+    // 初始化
+    // ======================================================================== //
+    connectSSE();
+    loadAccounts();
+  </script>
+</body>
+</html>
