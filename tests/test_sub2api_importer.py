@@ -520,3 +520,101 @@ class TestTestConnection:
 
         monkeypatch.setattr(sub2api_importer.requests.Session, "get", fake_get)
         assert importer.test_connection() is False
+
+
+# --------------------------------------------------------------------------- #
+# set_account_status
+# --------------------------------------------------------------------------- #
+class TestSetAccountStatus:
+    def test_active(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_patch(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            assert url == "https://sub2api.example.com/api/v1/admin/accounts/7"
+            assert kw["json"] == {"status": "active"}
+            return _FakeResp({"code": 0, "data": {"id": 7, "status": "active"}})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "patch", fake_patch)
+        assert importer.set_account_status(7, active=True) == {"id": 7, "status": "active"}
+
+    def test_inactive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_patch(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            assert kw["json"] == {"status": "inactive"}
+            return _FakeResp({"code": 0, "data": {"id": 7}})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "patch", fake_patch)
+        importer.set_account_status(7, active=False)
+
+    def test_nonzero_code_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_patch(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            return _FakeResp({"code": 400, "message": "bad request"})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "patch", fake_patch)
+        with pytest.raises(RuntimeError):
+            importer.set_account_status(7)
+
+
+# --------------------------------------------------------------------------- #
+# refresh_account
+# --------------------------------------------------------------------------- #
+class TestRefreshAccount:
+    def test_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_post(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            assert url == "https://sub2api.example.com/api/v1/admin/accounts/9/refresh"
+            assert kw["json"] == {}
+            return _FakeResp({"code": 0, "data": {"id": 9, "refreshed": True}})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "post", fake_post)
+        assert importer.refresh_account(9) == {"id": 9, "refreshed": True}
+
+    def test_nonzero_code_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_post(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            return _FakeResp({"code": 500, "message": "refresh failed"})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "post", fake_post)
+        with pytest.raises(RuntimeError):
+            importer.refresh_account(9)
+
+
+# --------------------------------------------------------------------------- #
+# delete_account（confirm=False 默认 dry-run）
+# --------------------------------------------------------------------------- #
+class TestDeleteAccount:
+    def test_dry_run_does_not_call_api(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_delete(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            raise AssertionError("dry-run 不应发起真实请求")
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "delete", fake_delete)
+        result = importer.delete_account(5)
+        assert result == {"dry_run": True, "account_id": 5, "deleted": False}
+
+    def test_confirm_deletes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_delete(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            assert url == "https://sub2api.example.com/api/v1/admin/accounts/5"
+            return _FakeResp({"code": 0})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "delete", fake_delete)
+        result = importer.delete_account(5, confirm=True)
+        assert result == {"dry_run": False, "account_id": 5, "deleted": True}
+
+    def test_confirm_nonzero_code_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        importer = _make_authed_importer()
+
+        def fake_delete(self_sess: Any, url: str, **kw: Any) -> _FakeResp:
+            return _FakeResp({"code": 404, "message": "not found"})
+
+        monkeypatch.setattr(sub2api_importer.requests.Session, "delete", fake_delete)
+        with pytest.raises(RuntimeError):
+            importer.delete_account(5, confirm=True)

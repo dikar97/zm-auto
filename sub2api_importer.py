@@ -245,3 +245,57 @@ class Sub2APIImporter:
             return data.get("code") == 0
         except Exception:
             return False
+
+    # ------------------------------------------------------------------ #
+    # 写能力（账号池维护用，中风险；delete 默认 dry-run 需显式确认）
+    # ------------------------------------------------------------------ #
+    def set_account_status(self, account_id: int | str, active: bool = True) -> dict[str, Any]:
+        """启用 / 禁用账号。active=True → status=active，False → inactive。"""
+        if not self._token:
+            self.login()
+        status = "active" if active else "inactive"
+        r = self._session.patch(
+            f"{self.base_url}/api/v1/admin/accounts/{account_id}",
+            headers=self.headers,
+            json={"status": status},
+            timeout=15,
+            verify=False,
+        )
+        data = r.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"设置账号状态失败: {data}")
+        return data.get("data") or {}
+
+    def refresh_account(self, account_id: int | str) -> dict[str, Any]:
+        """刷新账号凭证（token 救援）。"""
+        if not self._token:
+            self.login()
+        r = self._session.post(
+            f"{self.base_url}/api/v1/admin/accounts/{account_id}/refresh",
+            headers=self.headers,
+            json={},
+            timeout=15,
+            verify=False,
+        )
+        data = r.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"刷新账号失败: {data}")
+        return data.get("data") or {}
+
+    def delete_account(self, account_id: int | str, confirm: bool = False) -> dict[str, Any]:
+        """删除账号。confirm=False 时为 dry-run，不发起真实请求，仅回显将删除的目标。"""
+        if not confirm:
+            # dry-run：保护性默认，避免误删；调用方须显式传 confirm=True
+            return {"dry_run": True, "account_id": account_id, "deleted": False}
+        if not self._token:
+            self.login()
+        r = self._session.delete(
+            f"{self.base_url}/api/v1/admin/accounts/{account_id}",
+            headers=self.headers,
+            timeout=15,
+            verify=False,
+        )
+        data = r.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"删除账号失败: {data}")
+        return {"dry_run": False, "account_id": account_id, "deleted": True}
