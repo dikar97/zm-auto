@@ -7,9 +7,14 @@ venv/
 
 # Config (contains secrets)
 config.json
+config.yaml
+config.yml
 
 # Output
 accounts.json
+
+# Orchestration artifacts
+.omo/
 
 # OS
 .DS_Store

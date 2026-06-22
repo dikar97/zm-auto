@@ -1,0 +1,50 @@
+name: Auto Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 打包源码 zip
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          if [[ $GITHUB_REF != refs/tags/* ]]; then
+            TAG_NAME="latest"
+          fi
+
+          ZIP_NAME="zm-auto-${TAG_NAME}.zip"
+
+          zip -r $ZIP_NAME . \
+            -x "*.git*" \
+            -x "*.github*" \
+            -x "*__pycache__*" \
+            -x "data/*" \
+            -x "config.json" \
+            -x "accounts.json" \
+            -x "*.env" \
+            -x "venv/*" \
+            -x ".idea/*" \
+            -x ".vscode/*" \
+            -x ".omo/*"
+
+          echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
+
+      - name: 发布到 GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP_FILE }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

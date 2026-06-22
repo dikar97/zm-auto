@@ -25,6 +25,17 @@ provider_lock = Lock()
 domain_index = 0
 provider_index = 0
 
+# 运行时域名控制状态（受 domain_lock 保护）：
+# - 禁用集合：管理员手动屏蔽，永久生效直到 enable_domain 解除
+# - 失败计数：record_domain_fail 累计，达到阈值自动进入冷却
+# - 冷却到期时间戳：冷却期内 _next_domain 会跳过该域名
+# 默认阈值 3 次失败触发 300 秒冷却，可经 configure_domain_control 调整
+_disabled_domains: set[str] = set()
+_domain_fail_counters: dict[str, int] = {}
+_domain_cooldown_until: dict[str, float] = {}
+_fail_threshold: int = 3
+_fail_cooldown_sec: int = 300
+
 
 # --------------------------------------------------------------------------- #
 # Config helpers
@@ -52,15 +63,134 @@ def _random_subdomain_label() -> str:
 
 def _next_domain(domains: list[str]) -> str:
     global domain_index
-    domains = [str(item).strip() for item in domains if str(item).strip()]
-    if not domains:
+    cleaned = [str(item).strip() for item in domains if str(item).strip()]
+    if not cleaned:
         raise RuntimeError("mail.domain 不能为空")
-    if len(domains) == 1:
-        return domains[0]
+    now = time.time()
     with domain_lock:
-        value = domains[domain_index % len(domains)]
-        domain_index = (domain_index + 1) % len(domains)
+        available = [
+            d for d in cleaned
+            if d not in _disabled_domains and now >= _domain_cooldown_until.get(d, 0.0)
+        ]
+        if not available:
+            disabled_count = sum(1 for d in cleaned if d in _disabled_domains)
+            cooling_count = len(cleaned) - disabled_count
+            raise RuntimeError(
+                f"所有 mail.domain 均不可用（禁用 {disabled_count}、冷却 {cooling_count}）"
+            )
+        if len(available) == 1:
+            return available[0]
+        value = available[domain_index % len(available)]
+        domain_index = (domain_index + 1) % len(available)
         return value
+
+
+def configure_domain_control(
+    fail_threshold: int | None = None,
+    fail_cooldown_sec: int | None = None,
+) -> None:
+    global _fail_threshold, _fail_cooldown_sec
+    with domain_lock:
+        if fail_threshold is not None:
+            _fail_threshold = max(1, int(fail_threshold))
+        if fail_cooldown_sec is not None:
+            _fail_cooldown_sec = max(0, int(fail_cooldown_sec))
+
+
+def disable_domain(domain: str) -> None:
+    with domain_lock:
+        _disabled_domains.add(str(domain).strip())
+
+
+def enable_domain(domain: str) -> None:
+    key = str(domain).strip()
+    with domain_lock:
+        _disabled_domains.discard(key)
+        _domain_fail_counters.pop(key, None)
+        _domain_cooldown_until.pop(key, None)
+
+
+def record_domain_fail(domain: str) -> None:
+    key = str(domain).strip()
+    if not key:
+        return
+    with domain_lock:
+        count = _domain_fail_counters.get(key, 0) + 1
+        _domain_fail_counters[key] = count
+        if count >= _fail_threshold:
+            _domain_cooldown_until[key] = time.time() + _fail_cooldown_sec
+
+
+def record_domain_success(domain: str) -> None:
+    key = str(domain).strip()
+    if not key:
+        return
+    with domain_lock:
+        _domain_fail_counters.pop(key, None)
+
+
+def get_domain_status() -> dict[str, Any]:
+    now = time.time()
+    with domain_lock:
+        tracked = sorted(
+            set(_disabled_domains) | set(_domain_fail_counters) | set(_domain_cooldown_until)
+        )
+        return {
+            "fail_threshold": _fail_threshold,
+            "fail_cooldown_sec": _fail_cooldown_sec,
+            "domains": {
+                d: {
+                    "disabled": d in _disabled_domains,
+                    "fail_count": _domain_fail_counters.get(d, 0),
+                    "cooling": now < _domain_cooldown_until.get(d, 0.0),
+                    "cooldown_remaining": max(0.0, _domain_cooldown_until.get(d, 0.0) - now),
+                }
+                for d in tracked
+            },
+        }
+
+
+def reset_domain_state() -> None:
+    global _fail_threshold, _fail_cooldown_sec
+    with domain_lock:
+        _disabled_domains.clear()
+        _domain_fail_counters.clear()
+        _domain_cooldown_until.clear()
+        _fail_threshold = 3
+        _fail_cooldown_sec = 300
+
+
+def _build_subdomain_chain(
+    base_domain: str,
+    levels: int = 1,
+    random_levels: bool = False,
+) -> str:
+    cleaned = str(base_domain or "").strip()
+    if not cleaned:
+        raise RuntimeError("base_domain 不能为空")
+    if levels < 1:
+        return cleaned
+    actual = random.randint(1, levels) if random_levels else levels
+    if actual <= 0:
+        return cleaned
+    labels = [_random_subdomain_label() for _ in range(actual)]
+    return f"{'.'.join(labels)}.{cleaned}"
+
+
+def generate_mailbox_address(
+    domain: str,
+    username: str | None = None,
+    sub_levels: int = 1,
+    random_levels: bool = False,
+) -> str:
+    user = (username or "").strip() or _random_mailbox_name()
+    if sub_levels >= 1:
+        full_domain = _build_subdomain_chain(domain, sub_levels, random_levels)
+    else:
+        full_domain = str(domain or "").strip()
+    if not full_domain:
+        raise RuntimeError("domain 不能为空")
+    return f"{user}@{full_domain}"
 
 
 # --------------------------------------------------------------------------- #

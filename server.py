@@ -22,8 +22,10 @@ VPS / 公网启动（必须设置认证）:
 from __future__ import annotations
 
 import asyncio
+import csv
 import hashlib
 import hmac
+import io
 import json
 import os
 import secrets
@@ -38,7 +40,12 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -60,6 +67,32 @@ CONFIG_FILE = BASE_DIR / "config.json"
 ACCOUNTS_FILE = BASE_DIR / "accounts.json"
 WEB_DIR = BASE_DIR / "web"
 LOGIN_PAGE = WEB_DIR / "login.html"
+
+# accounts.json 读写锁：避免批量删除/清空/导出之间的并发竞争
+_accounts_lock = threading.Lock()
+
+
+def _read_accounts() -> list[dict[str, Any]]:
+    """读取 accounts.json 并返回 list[dict]。文件不存在/损坏/非数组均返回空列表。"""
+    with _accounts_lock:
+        if not ACCOUNTS_FILE.exists():
+            return []
+        try:
+            data = json.loads(ACCOUNTS_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return []
+    if not isinstance(data, list):
+        return []
+    return [x for x in data if isinstance(x, dict)]
+
+
+def _write_accounts(accounts: list[dict[str, Any]]) -> None:
+    """原子化写入 accounts.json。"""
+    with _accounts_lock:
+        ACCOUNTS_FILE.write_text(
+            json.dumps(accounts, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
 # ---------------------------------------------------------------------------
 # 认证配置（环境变量驱动）
@@ -162,7 +195,20 @@ def _run_task(total: int, threads: int) -> None:
         register.config = register.load_config()
         register.config["total"] = total
         register.config["threads"] = threads
-        register.stats.update(done=0, success=0, fail=0, start_time=time.time())
+        # 在调 run() 前重置 stats（run() 内部还会再重置一次，但若 load_config 失败
+        # 或中途异常，至少前端拿到的是干净状态而非上次 run 的残留）。
+        register.stats.update(
+            done=0,
+            success=0,
+            fail=0,
+            start_time=time.time(),
+            total=total,
+            active=0,
+            last_error=None,
+            last_success_at=None,
+            last_error_at=None,
+            finished_at=None,
+        )
         register.run(total=total, threads=threads)
         _task_state["status"] = "done"
     except Exception as e:
@@ -416,24 +462,93 @@ async def sse_logs():
 
 
 @app.get("/api/accounts")
-async def get_accounts() -> JSONResponse:
-    """读取 accounts.json。"""
-    if not ACCOUNTS_FILE.exists():
-        return JSONResponse([])
-    try:
-        data = json.loads(ACCOUNTS_FILE.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"accounts.json 解析失败: {e}")
-    if not isinstance(data, list):
-        return JSONResponse([])
+async def get_accounts(q: str = "") -> JSONResponse:
+    """读取 accounts.json。可选 q 参数做大小写不敏感子串匹配（email/user_id/api_key）。"""
+    data = _read_accounts()
+    if q:
+        ql = q.lower()
+        data = [
+            a
+            for a in data
+            if ql in str(a.get("email", "")).lower()
+            or ql in str(a.get("user_id", "")).lower()
+            or ql in str(a.get("api_key", "")).lower()
+        ]
     return JSONResponse(data)
 
 
 @app.delete("/api/accounts")
 async def clear_accounts() -> JSONResponse:
     """清空 accounts.json（只清文件，不撤回已导入 Sub2API 的账号）。"""
-    ACCOUNTS_FILE.write_text("[]", encoding="utf-8")
+    _write_accounts([])
     return JSONResponse({"ok": True})
+
+
+@app.post("/api/accounts/delete")
+async def delete_accounts(body: dict[str, Any]) -> JSONResponse:
+    """批量删除指定索引的账号。body: {"indices": [0, 2, 5]}。
+    索引基于当前 accounts.json 数组顺序，越界自动忽略。
+    返回实际删除数量与剩余数量。
+    """
+    raw_indices = body.get("indices")
+    if raw_indices is None:
+        raw_indices = body.get("ids", [])
+    if not isinstance(raw_indices, list):
+        raise HTTPException(status_code=400, detail="indices 必须是数组")
+    try:
+        indices = sorted({int(i) for i in raw_indices}, reverse=True)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="indices 元素必须是整数")
+
+    data = _read_accounts()
+    removed = 0
+    for i in indices:
+        if 0 <= i < len(data):
+            data.pop(i)
+            removed += 1
+    if removed:
+        _write_accounts(data)
+    return JSONResponse({"ok": True, "removed": removed, "remaining": len(data)})
+
+
+@app.get("/api/accounts/export")
+async def export_accounts(format: str = "json", indices: str = "") -> Response:
+    """导出账号。format: json|csv；indices: 逗号分隔索引，不传=全部。"""
+    data = _read_accounts()
+    if indices:
+        try:
+            idx_set = {int(x) for x in indices.split(",") if x.strip()}
+        except ValueError:
+            raise HTTPException(status_code=400, detail="indices 必须是逗号分隔整数")
+        data = [a for i, a in enumerate(data) if i in idx_set]
+
+    fmt = format.lower()
+    if fmt == "csv":
+        out = io.StringIO()
+        # UTF-8 BOM 让 Excel 正确识别编码
+        out.write("\ufeff")
+        writer = csv.writer(out)
+        writer.writerow(["email", "user_id", "api_key", "sub2api_id", "created_at"])
+        for a in data:
+            writer.writerow(
+                [
+                    a.get("email", ""),
+                    a.get("user_id", ""),
+                    a.get("api_key", ""),
+                    a.get("sub2api_id", ""),
+                    a.get("created_at", ""),
+                ]
+            )
+        return Response(
+            content=out.getvalue(),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=accounts.csv"},
+        )
+    return Response(
+        content=json.dumps(data, ensure_ascii=False, indent=2),
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=accounts.json"},
+    )
 
 
 # ---------------------------------------------------------------------------

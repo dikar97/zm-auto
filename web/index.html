@@ -97,7 +97,7 @@
         <!-- 统计卡片 -->
         <div class="bg-panel border border-border rounded-xl p-5">
           <h2 class="text-base font-semibold mb-4">实时统计</h2>
-          <div class="grid grid-cols-2 gap-3 text-center">
+          <div class="grid grid-cols-4 gap-3 text-center">
             <div class="bg-bg/50 rounded-lg p-3">
               <div id="statDone" class="text-2xl font-mono font-bold text-white">0</div>
               <div class="text-xs text-gray-500 mt-1">已完成</div>
@@ -111,9 +111,28 @@
               <div class="text-xs text-gray-500 mt-1">失败</div>
             </div>
             <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statActive" class="text-2xl font-mono font-bold text-cyan">0</div>
+              <div class="text-xs text-gray-500 mt-1">活跃</div>
+            </div>
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statRate" class="text-2xl font-mono font-bold text-ok">—</div>
+              <div class="text-xs text-gray-500 mt-1">成功率</div>
+            </div>
+            <div class="bg-bg/50 rounded-lg p-3">
               <div id="statAvg" class="text-2xl font-mono font-bold text-cyan">—</div>
               <div class="text-xs text-gray-500 mt-1">平均秒/个</div>
             </div>
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statElapsed" class="text-2xl font-mono font-bold text-white">—</div>
+              <div class="text-xs text-gray-500 mt-1">用时</div>
+            </div>
+            <div class="bg-bg/50 rounded-lg p-3">
+              <div id="statTotal" class="text-2xl font-mono font-bold text-gray-300">0</div>
+              <div class="text-xs text-gray-500 mt-1">总数</div>
+            </div>
+          </div>
+          <div id="lastErrorBox" class="mt-3 hidden text-xs text-err bg-err/10 border border-err/30 rounded-lg p-2">
+            <span class="font-semibold">最近错误：</span><span id="lastErrorText"></span>
           </div>
         </div>
       </div>
@@ -156,11 +175,19 @@
     <!-- ====================== 账号 Tab ====================== -->
     <section id="tab-accounts" class="tab-panel hidden">
       <div class="bg-panel border border-border rounded-xl p-5">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="text-base font-semibold">已注册账号 (<span id="accountCount2">0</span>)</h2>
-          <div class="flex gap-2">
-            <button id="btnExport" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg">导出 JSON</button>
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div class="flex items-center gap-3">
+            <h2 class="text-base font-semibold">已注册账号 (<span id="accountCount2">0</span>)</h2>
+            <span id="selectedHint" class="text-xs text-gray-500 hidden">已选 <span id="selectedCount">0</span></span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <input id="searchInput" type="search" placeholder="搜索邮箱/ID/Key..."
+              class="px-3 py-1.5 text-xs bg-bg border border-border rounded-lg focus:border-accent focus:outline-none w-56" />
+            <button id="btnExportSelected" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg hidden">导出选中</button>
+            <button id="btnExportJson" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg">导出 JSON</button>
+            <button id="btnExportCsv" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg">导出 CSV</button>
             <button id="btnCopyAll" class="px-3 py-1.5 text-xs bg-bg border border-border hover:border-accent rounded-lg">复制全部 Key</button>
+            <button id="btnDeleteSelected" class="px-3 py-1.5 text-xs bg-bg border border-err/40 text-err hover:bg-err/10 rounded-lg hidden">删除选中</button>
             <button id="btnClear" class="px-3 py-1.5 text-xs bg-bg border border-err/40 text-err hover:bg-err/10 rounded-lg">清空</button>
           </div>
         </div>
@@ -168,6 +195,9 @@
           <table class="w-full text-sm">
             <thead class="text-xs text-gray-500 border-b border-border">
               <tr>
+                <th class="text-left py-2 px-3 font-medium w-10">
+                  <input id="selectAll" type="checkbox" class="accent-blue-500" />
+                </th>
                 <th class="text-left py-2 px-3 font-medium">邮箱</th>
                 <th class="text-left py-2 px-3 font-medium">User ID</th>
                 <th class="text-left py-2 px-3 font-medium">API Key</th>
@@ -265,8 +295,28 @@
         $('#statDone').textContent = st.done || 0;
         $('#statSuccess').textContent = st.success || 0;
         $('#statFail').textContent = st.fail || 0;
+        $('#statActive').textContent = st.active || 0;
+        $('#statTotal').textContent = st.total || t.total || 0;
         const avg = st.success > 0 && st.start_time ? ((Date.now() / 1000) - st.start_time) / st.success : null;
         $('#statAvg').textContent = avg != null ? avg.toFixed(1) : '—';
+        const rateDenom = (st.done || 0);
+        const rate = rateDenom > 0 ? ((st.success || 0) / rateDenom * 100) : null;
+        $('#statRate').textContent = rate != null ? rate.toFixed(0) + '%' : '—';
+        // 已用时：运行中显示 now-start，结束显示 finished-start
+        let elapsedSec = null;
+        if (st.start_time) {
+          const end = st.finished_at || (Date.now() / 1000);
+          elapsedSec = end - st.start_time;
+        }
+        $('#statElapsed').textContent = elapsedSec != null && elapsedSec >= 0 ? formatDuration(elapsedSec) : '—';
+        // 最近错误
+        const lastErrBox = $('#lastErrorBox');
+        if (st.last_error) {
+          $('#lastErrorText').textContent = st.last_error;
+          lastErrBox.classList.remove('hidden');
+        } else {
+          lastErrBox.classList.add('hidden');
+        }
 
         // 进度
         const total = t.total || st.done || 0;
@@ -351,58 +401,111 @@
     $('#btnReload').addEventListener('click', loadConfig);
 
     // ======================================================================== //
-    // 账号列表
+    // 账号列表（搜索过滤 + 批量删除/导出）
     // ======================================================================== //
+    let accountsList = [];
     async function loadAccounts() {
       try {
-        const list = await api('/api/accounts');
-        const body = $('#accountsBody');
-        body.innerHTML = '';
-        $('#accountCount').textContent = list.length;
-        $('#accountCount2').textContent = list.length;
-        $('#accountsEmpty').classList.toggle('hidden', list.length > 0);
-        for (const a of list) {
-          const tr = document.createElement('tr');
-          tr.className = 'hover:bg-bg/40';
-          const key = a.api_key || '';
-          const maskedKey = key ? `${key.slice(0, 10)}…${key.slice(-4)}` : '—';
-          tr.innerHTML = `
-            <td class="py-2 px-3 font-mono text-xs">${escapeHtml(a.email || '')}</td>
-            <td class="py-2 px-3 font-mono text-xs text-gray-400">${escapeHtml(a.user_id || '—')}</td>
-            <td class="py-2 px-3 font-mono text-xs">
-              <span class="text-accent">${escapeHtml(maskedKey)}</span>
-            </td>
-            <td class="py-2 px-3 font-mono text-xs">${a.sub2api_id != null ? a.sub2api_id : '—'}</td>
-            <td class="py-2 px-3 text-xs text-gray-400">${formatTime(a.created_at)}</td>
-            <td class="py-2 px-3 text-right">
-              <button class="text-xs px-2 py-1 hover:bg-bg rounded copy-key" data-key="${escapeHtml(key)}">复制</button>
-            </td>`;
-          body.appendChild(tr);
-        }
-        body.querySelectorAll('.copy-key').forEach((b) => {
-          b.addEventListener('click', () => {
-            navigator.clipboard.writeText(b.dataset.key);
-            b.textContent = '✓';
-            setTimeout(() => (b.textContent = '复制'), 1000);
-          });
-        });
+        accountsList = await api('/api/accounts');
+        renderAccounts();
       } catch (e) {
-        console.error(e);
+        console.error('loadAccounts failed', e);
       }
     }
-    $('#btnExport').addEventListener('click', async () => {
-      const list = await api('/api/accounts');
-      const blob = new Blob([JSON.stringify(list, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `accounts-${Date.now()}.json`; a.click();
-      URL.revokeObjectURL(url);
+    function renderAccounts() {
+      const body = $('#accountsBody');
+      const q = $('#searchInput').value.trim().toLowerCase();
+      const filtered = [];
+      for (let i = 0; i < accountsList.length; i++) {
+        const a = accountsList[i];
+        if (q) {
+          const hay = ((a.email || '') + ' ' + (a.user_id || '') + ' ' + (a.api_key || '')).toLowerCase();
+          if (!hay.includes(q)) continue;
+        }
+        filtered.push({ data: a, idx: i });
+      }
+      body.innerHTML = '';
+      const total = accountsList.length;
+      const shown = filtered.length;
+      $('#accountCount').textContent = total;
+      $('#accountCount2').textContent = shown === total ? String(total) : `${shown}/${total}`;
+      $('#accountsEmpty').classList.toggle('hidden', total > 0);
+      for (const item of filtered) {
+        const a = item.data;
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-bg/40';
+        const key = a.api_key || '';
+        const maskedKey = key ? `${key.slice(0, 10)}…${key.slice(-4)}` : '—';
+        tr.innerHTML = `
+          <td class="py-2 px-3"><input type="checkbox" class="accent-blue-500 row-check" data-idx="${item.idx}" /></td>
+          <td class="py-2 px-3 font-mono text-xs">${escapeHtml(a.email || '')}</td>
+          <td class="py-2 px-3 font-mono text-xs text-gray-400">${escapeHtml(a.user_id || '—')}</td>
+          <td class="py-2 px-3 font-mono text-xs">
+            <span class="text-accent">${escapeHtml(maskedKey)}</span>
+          </td>
+          <td class="py-2 px-3 font-mono text-xs">${a.sub2api_id != null ? a.sub2api_id : '—'}</td>
+          <td class="py-2 px-3 text-xs text-gray-400">${formatTime(a.created_at)}</td>
+          <td class="py-2 px-3 text-right">
+            <button class="text-xs px-2 py-1 hover:bg-bg rounded copy-key" data-key="${escapeHtml(key)}">复制</button>
+          </td>`;
+        body.appendChild(tr);
+      }
+      body.querySelectorAll('.copy-key').forEach((b) => {
+        b.addEventListener('click', () => {
+          navigator.clipboard.writeText(b.dataset.key);
+          b.textContent = '✓';
+          setTimeout(() => (b.textContent = '复制'), 1000);
+        });
+      });
+      $('#selectAll').checked = false;
+      updateSelectionUI();
+    }
+    function updateSelectionUI() {
+      const checks = document.querySelectorAll('.row-check');
+      const checked = document.querySelectorAll('.row-check:checked');
+      const hasSel = checked.length > 0;
+      $('#selectedHint').classList.toggle('hidden', !hasSel);
+      $('#btnDeleteSelected').classList.toggle('hidden', !hasSel);
+      $('#btnExportSelected').classList.toggle('hidden', !hasSel);
+      if (hasSel) $('#selectedCount').textContent = checked.length;
+      $('#selectAll').checked = checks.length > 0 && checked.length === checks.length;
+    }
+    $('#selectAll').addEventListener('change', (e) => {
+      document.querySelectorAll('.row-check').forEach((c) => { c.checked = e.target.checked; });
+      updateSelectionUI();
+    });
+    $('#accountsBody').addEventListener('change', (e) => {
+      if (e.target.classList.contains('row-check')) updateSelectionUI();
+    });
+    $('#searchInput').addEventListener('input', renderAccounts);
+
+    $('#btnDeleteSelected').addEventListener('click', async () => {
+      const indices = Array.from(document.querySelectorAll('.row-check:checked')).map((c) => parseInt(c.dataset.idx, 10));
+      if (!indices.length) return;
+      if (!confirm(`确定删除选中的 ${indices.length} 个账号？此操作不可恢复（已导入 Sub2API 的不会被撤回）。`)) return;
+      try {
+        const r = await api('/api/accounts/delete', { method: 'POST', body: JSON.stringify({ indices }) });
+        await loadAccounts();
+        alert(`已删除 ${r.removed} 个账号，剩余 ${r.remaining} 个`);
+      } catch (e) {
+        alert('删除失败：' + e.message);
+      }
+    });
+    $('#btnExportSelected').addEventListener('click', () => {
+      const indices = Array.from(document.querySelectorAll('.row-check:checked')).map((c) => c.dataset.idx).join(',');
+      if (!indices) return;
+      window.location.href = `/api/accounts/export?format=json&indices=${encodeURIComponent(indices)}`;
+    });
+    $('#btnExportJson').addEventListener('click', () => {
+      window.location.href = '/api/accounts/export?format=json';
+    });
+    $('#btnExportCsv').addEventListener('click', () => {
+      window.location.href = '/api/accounts/export?format=csv';
     });
     $('#btnCopyAll').addEventListener('click', async () => {
-      const list = await api('/api/accounts');
-      const keys = list.map((x) => x.api_key).filter(Boolean).join('\n');
+      const keys = accountsList.map((x) => x.api_key).filter(Boolean).join('\n');
       navigator.clipboard.writeText(keys);
-      alert(`已复制 ${list.length} 个 Key`);
+      alert(`已复制 ${accountsList.length} 个 Key`);
     });
     $('#btnClear').addEventListener('click', async () => {
       if (!confirm('确定清空 accounts.json？已导入 Sub2API 的账号不会被撤回。')) return;
@@ -470,6 +573,18 @@
         const d = new Date(iso);
         return d.toLocaleString('zh-CN', { hour12: false });
       } catch { return iso; }
+    }
+    // 秒数转可读时长：<60s 显示 "Xs"，<3600s 显示 "Xm Ys"，否则 "Xh Ym"
+    function formatDuration(sec) {
+      if (sec == null || isNaN(sec) || sec < 0) return '—';
+      sec = Math.floor(sec);
+      if (sec < 60) return sec + 's';
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      if (sec < 3600) return m + 'm ' + s + 's';
+      const h = Math.floor(m / 60);
+      const mm = m % 60;
+      return h + 'h ' + mm + 'm';
     }
 
     // ======================================================================== //

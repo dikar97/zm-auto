@@ -6,3 +6,5 @@ uvicorn
 sse-starlette
 itsdangerous
 python-multipart
+PyYAML
+psutil
